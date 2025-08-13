@@ -1046,8 +1046,10 @@ class GraphMapper:
         return None
 
     def update_unexplored_exits_with_priority(self, node):
-        """Update unexplored exits with priority ordering"""
+        """Update unexplored exits with priority ordering + out-of-bounds handling"""
         node.unexploredExits = []
+        node.outOfBoundsExits = []
+        node.outOfBoundsCount = 0
         
         x, y = node.position
         
@@ -1075,11 +1077,13 @@ class GraphMapper:
         print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
         print(f"🔍 Wall status: {node.walls}")
         print(f"🤖 Robot facing: {self.currentDirection}")
+        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
         
         # ตรวจสอบตามลำดับความสำคัญและเพิ่มเข้า unexploredExits
         for relative_dir in priority_order:
             absolute_dir = current_mapping[relative_dir]
             target_pos = possible_directions[absolute_dir]
+            target_x, target_y = target_pos
             target_node_id = self.get_node_id(target_pos)
             
             # ตรวจสอบเงื่อนไขเหมือนเดิม
@@ -1091,23 +1095,36 @@ class GraphMapper:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
             
+            # เช็คออกนอกขอบเขตแมพ
+            is_outer_boundary = (
+                target_x < self.min_x or target_x > self.max_x or
+                target_y < self.min_y or target_y > self.max_y
+            )
+            
             print(f"   📍 {relative_dir} ({absolute_dir}):")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
             print(f"      🏗️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
+            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
             
             should_explore = (not is_blocked and 
                             not already_explored and 
                             (not target_exists or not target_fully_explored))
             
             if should_explore:
-                node.unexploredExits.append(absolute_dir)
-                print(f"      ✅ ADDED to unexplored exits! (Priority: {relative_dir})")
+                if is_outer_boundary:
+                    node.outOfBoundsExits.append(absolute_dir)
+                    node.outOfBoundsCount = len(node.outOfBoundsExits)
+                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                else:
+                    node.unexploredExits.append(absolute_dir)
+                    print(f"      ✅ ADDED to unexplored exits! (Priority: {relative_dir})")
             else:
                 print(f"      ❌ NOT added to unexplored exits")
         
         print(f"🎯 Final unexplored exits (ordered by priority): {node.unexploredExits}")
+        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
         
         # อัปเดต frontier queue
         has_unexplored = len(node.unexploredExits) > 0
@@ -1401,10 +1418,20 @@ class GraphMapper:
         for node_id, node in self.nodes.items():
             print(f"\n📍 Node: {node.id} at {node.position}")
             print(f"   🔍 Fully Scanned: {node.fullyScanned}")
+            print(f"   🕒 Scan Timestamp: {node.scanTimestamp}")
+            print(f"   🕒 Last Visited: {node.lastVisited}")
+            print(f"   🧭 Initial Scan Direction: {node.initialScanDirection}")
             print(f"   🧱 Walls (absolute): {node.walls}")
             print(f"   🔍 Unexplored exits: {node.unexploredExits}")
+            print(f"   🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
             print(f"   ✅ Explored directions: {node.exploredDirections}")
+            print(f"   🤝 Neighbors: {node.neighbors}")
             print(f"   🎯 Is dead end: {node.isDeadEnd}")
+            print(f"   🏁 Marker: {node.marker}")
+            print(f"   🏁 Marker sides: {node.markerSides}")
+            print(f"   🏁 Marker IDs by side: {node.markerIdsBySide}")
+            print(f"   🔴 Red sides: {node.redSides}")
+            print(f"   👁️ Vision detections: {node.visionDetections}")
             
             if node.sensorReadings:
                 print(f"   📡 Sensor readings:")
@@ -1417,6 +1444,54 @@ class GraphMapper:
         else:
             print("🎉 EXPLORATION COMPLETE - No more frontiers!")
         print("="*60)
+
+    def to_dict(self):
+        data = {
+            'currentPosition': self.currentPosition,
+            'currentDirection': self.currentDirection,
+            'min_x': self.min_x,
+            'max_x': self.max_x,
+            'min_y': self.min_y,
+            'max_y': self.max_y,
+            'frontierQueue': list(self.frontierQueue),
+            'nodes': {}
+        }
+        for node_id, node in self.nodes.items():
+            data['nodes'][node_id] = {
+                'id': node.id,
+                'position': list(node.position),
+                'walls': node.walls,
+                'unexploredExits': list(node.unexploredExits),
+                'outOfBoundsExits': list(node.outOfBoundsExits),
+                'outOfBoundsCount': node.outOfBoundsCount,
+                'exploredDirections': list(node.exploredDirections),
+                'neighbors': node.neighbors,
+                'visited': node.visited,
+                'visitCount': node.visitCount,
+                'isDeadEnd': node.isDeadEnd,
+                'fullyScanned': node.fullyScanned,
+                'scanTimestamp': node.scanTimestamp,
+                'lastVisited': node.lastVisited,
+                'initialScanDirection': node.initialScanDirection,
+                'sensorReadings': node.sensorReadings,
+                'marker': node.marker,
+                'markerSides': list(node.markerSides),
+                'markerIdsBySide': node.markerIdsBySide,
+                'redSides': list(node.redSides),
+                'visionDetections': node.visionDetections,
+            }
+        return data
+
+    def is_exploration_complete(self):
+        # Rebuild frontier to ensure up-to-date
+        self.rebuild_frontier_queue()
+        if self.frontierQueue:
+            return False
+        # Check any node has unexplored exits
+        for node in self.nodes.values():
+            if node.unexploredExits:
+                return False
+        return True
 
 # ===== ToF Sensor Handler =====
 class ToFSensorHandler:
@@ -1925,16 +2000,28 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, marke
             scan_results = scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_handler, graph_mapper)
             scanning_iterations += 1
             
+            # If after scanning there are no more frontiers/unexplored exits, stop immediately
+            if graph_mapper.is_exploration_complete():
+                print("🎉 Exploration complete after scan - stopping program.")
+                break
+            
             # Check if this scan revealed a dead end
             if graph_mapper.is_dead_end(current_node):
                 print(f"🚫 DEAD END DETECTED after scanning!")
                 print(f"🔙 Initiating reverse maneuver...")
+                
+                # If no more frontiers remain, stop instead of reversing
+                if graph_mapper.is_exploration_complete():
+                    print("🎉 No remaining frontiers - stopping instead of reversing.")
+                    break
                 
                 success = graph_mapper.handle_dead_end(movement_controller)
                 if success:
                     dead_end_reversals += 1
                     print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
                     nodes_explored += 1
+                    # Save graph after each movement step
+                    save_graph_to_file(graph_mapper)
                     continue
                 else:
                     print(f"❌ Failed to reverse from dead end!")
@@ -1948,6 +2035,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, marke
         
         # Print current graph state
         graph_mapper.print_graph_summary()
+        # Save graph snapshot for plotting
+        save_graph_to_file(graph_mapper)
         
         # Find next direction to explore
         graph_mapper.previous_node = current_node
@@ -2008,8 +2097,10 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, marke
                     print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
                     
                     time.sleep(0.2)
+                    # Save after backtrack
+                    save_graph_to_file(graph_mapper)
                     continue
-                    
+                
                 else:
                     print(f"❌ Failed to execute reverse backtracking path!")
                     break
@@ -2064,6 +2155,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, marke
     
     graph_mapper.print_graph_summary()
     generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
+    # Save final graph to file for plotting
+    save_graph_to_file(graph_mapper)
 
 
 def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0, final_drift_status=None):
@@ -2154,6 +2247,14 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
 
+def save_graph_to_file(graph_mapper, filepath="/workspace/graph_map.json"):
+    try:
+        data = graph_mapper.to_dict()
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"💾 Graph saved to {filepath}")
+    except Exception as e:
+        print(f"❌ Failed to save graph: {e}")
 
 # 4. แก้ไขการตั้งค่า boundary ใน main
 if __name__ == '__main__':
@@ -2207,6 +2308,11 @@ if __name__ == '__main__':
             movement_controller.cleanup()
             attitude_handler.stop_monitoring(ep_chassis)
             marker_handler.stop_continuous_detection(ep_vision)
+        except:
+            pass
+        # Save whatever state we have before closing
+        try:
+            save_graph_to_file(graph_mapper)
         except:
             pass
         ep_robot.close()
