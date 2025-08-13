@@ -1,6 +1,7 @@
 import time
 import robomaster
 from robomaster import robot
+from robomaster import vision
 import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
@@ -572,6 +573,8 @@ class GraphNode:
 
         # Additional info
         self.marker = False
+        self.markerSides = []
+        self.markerIdsBySide = {}
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
         
@@ -1506,9 +1509,83 @@ class ToFSensorHandler:
         
         return is_wall
 
+# ===== Marker Detection (Integrated) =====
+class MarkerInfo:
+    def __init__(self, x, y, w, h, marker_id):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._id = marker_id
+
+    @property
+    def id(self):
+        return self._id
+
+class MarkerVisionHandler:
+    def __init__(self):
+        self.markers = []
+        self.marker_detected = False
+        self.is_active = False
+        self.detection_timeout = 1.0
+    
+    def on_detect_marker(self, marker_info):
+        if not self.is_active:
+            return
+        if len(marker_info) > 0:
+            valid_markers = []
+            for i in range(len(marker_info)):
+                x, y, w, h, marker_id = marker_info[i]
+                marker = MarkerInfo(x, y, w, h, marker_id)
+                valid_markers.append(marker)
+            if valid_markers:
+                self.marker_detected = True
+                self.markers = valid_markers
+
+    def wait_for_markers(self, timeout=None):
+        if timeout is None:
+            timeout = self.detection_timeout
+        print(f"⏱️ Waiting {timeout} seconds for marker detection...")
+        self.marker_detected = False
+        self.markers.clear()
+        start_time = time.time()
+        while (time.time() - start_time) < timeout:
+            if self.marker_detected:
+                print(f"✅ Marker detected after {time.time() - start_time:.1f}s")
+                break
+            time.sleep(0.02)
+        return self.marker_detected
+
+    def start_continuous_detection(self, ep_vision):
+        try:
+            self.stop_continuous_detection(ep_vision)
+            time.sleep(0.3)
+            result = ep_vision.sub_detect_info(name="marker", callback=self.on_detect_marker)
+            if result:
+                self.is_active = True
+                print("✅ Marker detection activated")
+                return True
+            else:
+                print("❌ Failed to start marker detection")
+                return False
+        except Exception as e:
+            print(f"❌ Error starting marker detection: {e}")
+            return False
+
+    def stop_continuous_detection(self, ep_vision):
+        try:
+            self.is_active = False
+            ep_vision.unsub_detect_info(name="marker")
+        except:
+            pass
+
+    def reset_detection(self):
+        self.marker_detected = False
+        self.markers.clear()
+
 # ===== Main Exploration Functions =====
-def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
-    """NEW: Scan current node and update graph with ABSOLUTE directions"""
+def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_handler, graph_mapper):
+    """NEW: Scan current node and update graph with ABSOLUTE directions, plus marker scan per yaw (-90/0/90) and back at start"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
     
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
@@ -1536,7 +1613,36 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     speed = 480
     scan_results = {}
     ep_chassis_fix = ep_robot.chassis
-    
+
+    def perform_marker_scan(direction_key, yaw_angle, distance_value):
+        try:
+            if distance_value > 0 and distance_value <= 40.0:
+                print("✅ Distance OK - Scanning for markers...")
+                marker_handler.reset_detection()
+                # Tilt down for better marker visibility
+                gimbal.moveto(pitch=-20, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+                time.sleep(0.2)
+                detected = marker_handler.wait_for_markers(timeout=1.0)
+                # Return pitch to 0 at this yaw
+                gimbal.moveto(pitch=0, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+                time.sleep(0.1)
+                if detected and marker_handler.markers:
+                    marker_ids = [m.id for m in marker_handler.markers]
+                    print(f"🎯 FOUND MARKERS at {direction_key.upper()}: {marker_ids}")
+                    current_node.marker = True
+                    if direction_key not in current_node.markerSides:
+                        current_node.markerSides.append(direction_key)
+                    current_node.markerIdsBySide[direction_key] = marker_ids
+                else:
+                    print(f"❌ No markers found at {direction_key.upper()}")
+            else:
+                if distance_value <= 0:
+                    print(f"⏭️ Skip marker scan at {direction_key.upper()}: invalid ToF reading ({distance_value:.2f}cm)")
+                else:
+                    print(f"⏭️ Skip marker scan at {direction_key.upper()}: too far ({distance_value:.2f}cm > 40cm)")
+        except Exception as e:
+            print(f"❌ Marker scan error at {direction_key.upper()}: {e}")
+
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1550,17 +1656,17 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     front_distance = tof_handler.get_average_distance('front')
     front_wall = tof_handler.is_wall_detected('front')
     scan_results['front'] = front_distance
-    
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
 
-    if front_distance <= 19.0 : # ถ้าใกล้เกิน19เซน
-        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
+    # Marker scan for front at 0°
+    perform_marker_scan('front', 0, front_distance)
+
+    if front_distance <= 19.0 :
+        move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
-    # if front_distance >= 25:
-    #     move_distance=  (front_distance)
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1574,15 +1680,14 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
-
-    
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
 
-    # หลังจาก scan front/left/right เสร็จ แต่ก่อน return
-    # เช็คกรณีเป็นโหนดเริ่มต้น (0,0) และหันหน้าเริ่มต้น
+    # Marker scan for left at -90°
+    perform_marker_scan('left', -90, left_distance)
+
+    # Special BACK scan at start node (with marker check)
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
-        # หมุน gimbal 180° เพื่อสแกนด้านหลัง
         gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
         time.sleep(0.2)
 
@@ -1594,10 +1699,9 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         back_distance = tof_handler.get_average_distance('back')
         back_wall = tof_handler.is_wall_detected('back')
         scan_results['back'] = back_distance
-        
         print(f"📏 BACK scan result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
 
-        # อัปเดตกำแพงแบบ absolute
+        # Update absolute back wall
         direction_map = {
             'north': 'south',
             'south': 'north',
@@ -1608,10 +1712,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         current_node.walls[back_abs_dir] = back_wall
         current_node.wallBack = back_wall
 
-        # ถ้ามีกำแพงด้านหลัง ให้ลบออกจาก unexploredExits
+        # Remove back from unexplored if wall
         if back_wall and back_abs_dir in current_node.unexploredExits:
             current_node.unexploredExits.remove(back_abs_dir)
             print(f"🧹 Removed BACK ({back_abs_dir}) from unexplored exits at start node")
+
+        # Marker scan for back at 180°
+        perform_marker_scan('back', 180, back_distance)
 
     if left_distance < 15:
         move_distance = 20 - left_distance
@@ -1640,6 +1747,9 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         time.sleep(0.3)
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+
+    # Marker scan for right at 90°
+    perform_marker_scan('right', 90, right_distance)
     
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1649,7 +1759,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
     time.sleep(0.2)
     
-    # NEW: Update graph with wall information using ABSOLUTE directions
+    # Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
     
@@ -1657,10 +1767,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    if current_node.marker:
+        print(f"   🏁 Marker detected on sides: {current_node.markerSides} -> {current_node.markerIdsBySide}")
     
     return scan_results
 
-def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
+def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, marker_handler, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
     """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING"""
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
@@ -1699,7 +1811,7 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         if not current_node.fullyScanned:
             print("🔍 NEW NODE - Performing full scan...")
-            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper)
+            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_handler, graph_mapper)
             scanning_iterations += 1
             
             # Check if this scan revealed a dead end
@@ -1941,6 +2053,7 @@ if __name__ == '__main__':
     ep_gimbal = ep_robot.gimbal
     ep_chassis = ep_robot.chassis
     ep_sensor = ep_robot.sensor
+    ep_vision = ep_robot.vision
     
     # Initialize components with STRICTER boundaries
     tof_handler = ToFSensorHandler()
@@ -1948,6 +2061,8 @@ if __name__ == '__main__':
     movement_controller = MovementController(ep_chassis)
     attitude_handler = AttitudeHandler()
     attitude_handler.start_monitoring(ep_chassis)
+    marker_handler = MarkerVisionHandler()
+    marker_handler.start_continuous_detection(ep_vision)
     
     # ✅ เพิ่มการแสดงข้อมูล boundary
     boundary_info = graph_mapper.get_boundary_status()
@@ -1966,7 +2081,7 @@ if __name__ == '__main__':
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         
         # Start autonomous exploration with absolute directions
-        explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
+        explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, marker_handler, tof_handler, 
                            graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
@@ -1980,6 +2095,7 @@ if __name__ == '__main__':
             ep_sensor.unsub_distance()
             movement_controller.cleanup()
             attitude_handler.stop_monitoring(ep_chassis)
+            marker_handler.stop_continuous_detection(ep_vision)
         except:
             pass
         ep_robot.close()
