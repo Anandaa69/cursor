@@ -706,10 +706,12 @@ class GraphNode:
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
         
-        # NEW: Marker detection information
+        # NEW: Enhanced Marker detection information
         self.markersFound = {}  # Dictionary: {direction: [marker_ids]}
-        self.markerScanResults = {}  # Dictionary: {direction: {'marker_ids': [], 'distance': float, 'timestamp': str}}
+        self.markerScanResults = {}  # Dictionary: {direction: {'marker_ids': [], 'distance': float, 'timestamp': str, 'additional_scans': []}}
         self.hasMarkers = False  # Boolean flag if any markers found in any direction
+        self.totalMarkersFound = 0  # Total count of unique markers across all directions
+        self.markersByOffset = {}  # Dictionary: {direction: {'center': [], 'left': [], 'right': []}} for detailed tracking
         
         # IMPORTANT: Store the ABSOLUTE direction robot was facing when first scanned
         self.initialScanDirection = None
@@ -1707,9 +1709,9 @@ class ToFSensorHandler:
         return is_wall
 
 # ===== Marker Scanning Helper Function =====
-def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_handler, tof_handler, speed=480):
+def scan_for_markers_at_direction_enhanced(gimbal, sensor, angle, direction_name, marker_handler, tof_handler, speed=480):
     """
-    สแกนหา marker ที่ทิศทางและมุมที่กำหนด
+    Enhanced version: สแกนหา marker ที่ทิศทางและมุมที่กำหนด พร้อมกับการเลื่อนซ้าย-ขวาหากเจอ marker
     
     Args:
         gimbal: Gimbal object
@@ -1721,10 +1723,10 @@ def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_
         speed: ความเร็วการหมุน gimbal
         
     Returns:
-        dict: {'marker_ids': [], 'distance': float, 'direction_name': str, 'angle': int, 'timestamp': str}
+        dict: {'marker_ids': [], 'distance': float, 'direction_name': str, 'angle': int, 'timestamp': str, 'additional_scans': []}
     """
     compass_dir = get_compass_direction(angle)
-    print(f"🎯 Scanning {direction_name} | Gimbal Yaw: {angle}° | Compass: {compass_dir}")
+    print(f"🎯 Enhanced scanning {direction_name} | Gimbal Yaw: {angle}° | Compass: {compass_dir}")
     
     # หมุน gimbal ไปยังมุมที่กำหนด
     gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1740,21 +1742,82 @@ def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_
     print(f"   📐 Distance: {distance:.2f}cm at {angle}°")
     
     marker_ids = []
+    additional_scans = []
     
     # ตรวจ marker เฉพาะถ้าระยะใกล้พอ และมี ToF reading ที่ถูกต้อง
     if distance > 0 and distance <= 40.0:
         print("✅ Distance OK - Scanning for markers...")
         
-        # รีเซ็ตและเริ่มสแกน marker
+        # รีเซ็ตและเริ่มสแกน marker ที่ตำแหน่งกลาง
         marker_handler.reset_detection()
         detected = marker_handler.wait_for_markers(timeout=1.0)
         
         if detected and marker_handler.markers:
             marker_ids = [m.id for m in marker_handler.markers]
-            print(f"🎯 FOUND MARKERS: {marker_ids}")
+            print(f"🎯 FOUND MARKERS AT CENTER: {marker_ids}")
             print(f"   📍 Direction: {direction_name} ({angle}°)")
             print(f"   📏 Distance: {distance:.2f}cm")
             print(f"   🧭 Compass: {compass_dir}")
+            
+            # **NEW: เมื่อเจอ marker แล้ว ให้กวาดซ้าย-ขวาเพื่อหา marker เพิ่มเติม**
+            print(f"🔄 Scanning additional areas left and right of detected markers...")
+            
+            # สแกนซ้าย (เลื่อน yaw ลบ 15 องศา)
+            left_angle = angle - 15
+            print(f"   🔍 Scanning LEFT offset: {left_angle}°")
+            gimbal.moveto(pitch=-20, yaw=left_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+            time.sleep(0.2)
+            
+            marker_handler.reset_detection()
+            left_detected = marker_handler.wait_for_markers(timeout=0.8)
+            left_markers = []
+            if left_detected and marker_handler.markers:
+                left_markers = [m.id for m in marker_handler.markers]
+                print(f"   ✅ Found LEFT markers: {left_markers}")
+            else:
+                print(f"   ❌ No markers found at LEFT offset")
+            
+            additional_scans.append({
+                'offset': 'left',
+                'angle': left_angle,
+                'marker_ids': left_markers,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # สแกนขวา (เลื่อน yaw บวก 15 องศา)
+            right_angle = angle + 15
+            print(f"   🔍 Scanning RIGHT offset: {right_angle}°")
+            gimbal.moveto(pitch=-20, yaw=right_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+            time.sleep(0.2)
+            
+            marker_handler.reset_detection()
+            right_detected = marker_handler.wait_for_markers(timeout=0.8)
+            right_markers = []
+            if right_detected and marker_handler.markers:
+                right_markers = [m.id for m in marker_handler.markers]
+                print(f"   ✅ Found RIGHT markers: {right_markers}")
+            else:
+                print(f"   ❌ No markers found at RIGHT offset")
+            
+            additional_scans.append({
+                'offset': 'right',
+                'angle': right_angle,
+                'marker_ids': right_markers,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # รวม marker_ids จากการสแกนเพิ่มเติม (ไม่ซ้ำกัน)
+            all_markers = set(marker_ids)
+            for scan in additional_scans:
+                all_markers.update(scan['marker_ids'])
+            
+            marker_ids = list(all_markers)
+            print(f"🎯 TOTAL MARKERS FOUND: {marker_ids} (including offsets)")
+            
+            # กลับไปตำแหน่งเดิม
+            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+            time.sleep(0.2)
+            
         else:
             print(f"❌ No markers found at {direction_name} ({angle}°)")
     else:
@@ -1769,7 +1832,8 @@ def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_
         'direction_name': direction_name,
         'angle': angle,
         'compass_direction': compass_dir,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'additional_scans': additional_scans
     }
 
 # ===== Red Color Detection Function =====
@@ -1877,7 +1941,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
         
         print(f"\n🎯 สแกน Marker ที่ {direction_name} ({yaw}°)")
         
-        marker_scan_result = scan_for_markers_at_direction(gimbal, sensor, yaw, direction_key, marker_handler, tof_handler, speed=480)
+        marker_scan_result = scan_for_markers_at_direction_enhanced(gimbal, sensor, yaw, direction_key, marker_handler, tof_handler, speed=480)
         
         results[direction_key] = {
             'direction_name': direction_name,
@@ -1886,7 +1950,8 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
             'found_red': True,
             'angle': yaw,
             'compass_direction': marker_scan_result['compass_direction'],
-            'timestamp': marker_scan_result['timestamp']
+            'timestamp': marker_scan_result['timestamp'],
+            'additional_scans': marker_scan_result['additional_scans']
         }
         
         if marker_scan_result['marker_ids']:
@@ -2140,21 +2205,57 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
             else:
                 print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
             
-            # เก็บผลลัพธ์
+            # สแกนแบบ Enhanced เพื่อหา marker เพิ่มเติม
+            print(f"   🔄 Using enhanced marker scanning with left-right sweep...")
+            marker_scan_result = scan_for_markers_at_direction_enhanced(gimbal, sensor, angle, direction_name, marker_handler, tof_handler, speed)
+            
+            # เก็บผลลัพธ์แบบละเอียด
             current_node.markerScanResults[direction_name] = {
-                'marker_ids': marker_ids,
-                'distance': marker_distance,
+                'marker_ids': marker_scan_result['marker_ids'],
+                'distance': marker_scan_result['distance'],
                 'direction_name': direction_name,
                 'angle': angle,
-                'compass_direction': get_compass_direction(angle),
-                'timestamp': datetime.now().isoformat(),
-                'found_red': True
+                'compass_direction': marker_scan_result['compass_direction'],
+                'timestamp': marker_scan_result['timestamp'],
+                'found_red': True,
+                'additional_scans': marker_scan_result['additional_scans']
             }
             
-            if marker_ids:
-                current_node.markersFound[direction_name] = marker_ids
+            # เก็บข้อมูล marker แยกตาม offset
+            center_markers = marker_ids  # marker ที่เจอที่ตำแหน่งกลาง
+            left_markers = []
+            right_markers = []
+            
+            for additional_scan in marker_scan_result['additional_scans']:
+                if additional_scan['offset'] == 'left':
+                    left_markers = additional_scan['marker_ids']
+                elif additional_scan['offset'] == 'right':
+                    right_markers = additional_scan['marker_ids']
+            
+            current_node.markersByOffset[direction_name] = {
+                'center': center_markers,
+                'left': left_markers,
+                'right': right_markers
+            }
+            
+            if marker_scan_result['marker_ids']:
+                current_node.markersFound[direction_name] = marker_scan_result['marker_ids']
                 current_node.hasMarkers = True
-                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
+                
+                # คำนวณ total markers (unique)
+                all_markers_in_node = set()
+                for dir_markers in current_node.markersFound.values():
+                    all_markers_in_node.update(dir_markers)
+                current_node.totalMarkersFound = len(all_markers_in_node)
+                
+                print(f"   ✅ Enhanced scan complete for {direction_name}:")
+                print(f"      🎯 Total markers: {len(marker_scan_result['marker_ids'])}")
+                print(f"      📍 Center: {center_markers}")
+                print(f"      ⬅️ Left offset: {left_markers}")
+                print(f"      ➡️ Right offset: {right_markers}")
+                print(f"      📊 Node total unique markers: {current_node.totalMarkersFound}")
+            else:
+                print(f"   ❌ No markers found in enhanced scan at {direction_name}")
     
     elif marker_handler:
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
@@ -2395,6 +2496,19 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
     # แสดง final summary เฉพาะครั้งเดียวตอนจบ
     print(f"\n{'🎉'*20} FINAL EXPLORATION SUMMARY {'🎉'*20}")
     graph_mapper.print_graph_summary()
+    
+    # ตรวจสอบ backtracking logic และปัญหาต่างๆ
+    validation_results, logic_valid = validate_backtracking_logic(graph_mapper, movement_controller)
+    final_node_issues = check_final_node_issues(graph_mapper, movement_controller)
+    coordinate_test_results = coordinate_change_test(graph_mapper)
+    
+    # แสดงสรุปการตรวจสอบ
+    print(f"\n🔍 === COMPREHENSIVE SYSTEM VALIDATION ===")
+    print(f"✅ Backtracking Logic: {'VALID' if logic_valid else 'ISSUES FOUND'}")
+    print(f"✅ Final Node Status: {'CLEAN' if not final_node_issues else f'{len(final_node_issues)} ISSUES'}")
+    print(f"✅ Coordinate System: {'ROBUST' if coordinate_test_results['boundary_expansion_handled'] else 'NEEDS ATTENTION'}")
+    print(f"🎯 System is {'FULLY VALIDATED' if (logic_valid and not final_node_issues) else 'PARTIALLY VALIDATED'}")
+    
     generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
 
 
@@ -2431,20 +2545,41 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print(f"   🔙 Reverse backtracks performed: {reverse_backtracks}")
     print(f"   🚀 Remaining frontiers: {frontier_nodes}")
     
-    # NEW: Red-filtered marker detection summary
-    print(f"\n🎯 RED-FILTERED MARKER DETECTION SUMMARY:")
+    # NEW: Enhanced red-filtered marker detection summary
+    print(f"\n🎯 ENHANCED RED-FILTERED MARKER DETECTION SUMMARY:")
     print(f"   📍 Nodes with markers: {nodes_with_markers}")
     print(f"   🎯 Total markers found: {total_markers_found}")
     
-    # Count red detections from marker scan results
+    # Count red detections and enhanced scans from marker scan results
     red_detections = 0
+    enhanced_scans = 0
+    left_right_additional_markers = 0
+    
     for node in graph_mapper.nodes.values():
         if hasattr(node, 'markerScanResults') and node.markerScanResults:
             for direction, scan_result in node.markerScanResults.items():
                 if scan_result.get('found_red', False):
                     red_detections += 1
+                if scan_result.get('additional_scans'):
+                    enhanced_scans += 1
+                    for additional_scan in scan_result['additional_scans']:
+                        left_right_additional_markers += len(additional_scan.get('marker_ids', []))
+        
+        # Count markers by offset position
+        if hasattr(node, 'markersByOffset') and node.markersByOffset:
+            print(f"   📍 Node {node.id} marker breakdown:")
+            for direction, offsets in node.markersByOffset.items():
+                center_count = len(offsets.get('center', []))
+                left_count = len(offsets.get('left', []))
+                right_count = len(offsets.get('right', []))
+                total_in_direction = center_count + left_count + right_count
+                if total_in_direction > 0:
+                    print(f"      {direction.upper()}: {total_in_direction} total (center: {center_count}, left: {left_count}, right: {right_count})")
     
     print(f"   🔴 Red color detections: {red_detections}")
+    print(f"   🔄 Enhanced scans performed: {enhanced_scans}")
+    print(f"   ↔️ Additional markers from left-right sweep: {left_right_additional_markers}")
+    
     if total_markers_found > 0:
         print(f"   📊 Markers by direction:")
         for direction, count in markers_by_direction.items():
@@ -2453,6 +2588,8 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
         print(f"   📈 Marker detection rate: {nodes_with_markers/total_nodes*100:.1f}% of nodes")
         if red_detections > 0:
             print(f"   🎯 Marker success rate from red: {total_markers_found/red_detections*100:.1f}% when red detected")
+        if enhanced_scans > 0:
+            print(f"   🔄 Enhanced scan effectiveness: {left_right_additional_markers/enhanced_scans:.1f} additional markers per enhanced scan")
     
     # Efficiency metrics
     revisited_nodes = nodes_explored - total_nodes
@@ -2593,3 +2730,237 @@ if __name__ == '__main__':
             pass
         ep_robot.close()
         print("🔌 Connection closed")
+
+# ===== Logic Validation and Improvement Functions =====
+
+def validate_backtracking_logic(graph_mapper, movement_controller):
+    """
+    ตรวจสอบความถูกต้องของ backtracking logic และระบบนำทาง
+    """
+    print("\n🔍 === BACKTRACKING LOGIC VALIDATION ===")
+    
+    validation_results = {
+        'path_finding': True,
+        'coordinate_system': True,
+        'frontier_management': True,
+        'boundary_checking': True,
+        'issues': []
+    }
+    
+    # 1. ตรวจสอบ BFS path finding algorithm
+    print("1. 🗺️ Validating BFS Path Finding...")
+    
+    # ตรวจสอบว่า nodes ทั้งหมดเชื่อมต่อกันได้หรือไม่
+    if len(graph_mapper.nodes) > 1:
+        node_list = list(graph_mapper.nodes.keys())
+        start_node = node_list[0]
+        
+        for target_node in node_list[1:]:
+            path = graph_mapper.find_path_to_frontier(target_node)
+            if path is None:
+                validation_results['path_finding'] = False
+                validation_results['issues'].append(f"No path found from {start_node} to {target_node}")
+                print(f"   ❌ No path found from {start_node} to {target_node}")
+            else:
+                print(f"   ✅ Path found from {start_node} to {target_node}: {len(path)} steps")
+    
+    # 2. ตรวจสอบ coordinate system consistency
+    print("2. 🧭 Validating Coordinate System...")
+    
+    # ตรวจสอบว่า absolute directions ถูกต้อง
+    direction_pairs = [('north', 'south'), ('east', 'west')]
+    for node_id, node in graph_mapper.nodes.items():
+        x, y = node.position
+        for direction in ['north', 'south', 'east', 'west']:
+            next_pos = graph_mapper.get_next_position_from(node.position, direction)
+            next_node_id = graph_mapper.get_node_id(next_pos)
+            
+            if next_node_id in graph_mapper.nodes:
+                next_node = graph_mapper.nodes[next_node_id]
+                # ตรวจสอบว่า wall information สอดคล้องกัน
+                opposite_direction = {'north': 'south', 'south': 'north', 'east': 'west', 'west': 'east'}[direction]
+                
+                if node.walls.get(direction, False) != next_node.walls.get(opposite_direction, False):
+                    validation_results['coordinate_system'] = False
+                    validation_results['issues'].append(f"Wall mismatch between {node_id} ({direction}) and {next_node_id} ({opposite_direction})")
+                    print(f"   ⚠️ Wall inconsistency: {node_id}->{direction} vs {next_node_id}->{opposite_direction}")
+    
+    # 3. ตรวจสอบ frontier management
+    print("3. 🚀 Validating Frontier Management...")
+    
+    for frontier_id in graph_mapper.frontierQueue:
+        if frontier_id not in graph_mapper.nodes:
+            validation_results['frontier_management'] = False
+            validation_results['issues'].append(f"Frontier {frontier_id} does not exist in nodes")
+            print(f"   ❌ Invalid frontier: {frontier_id}")
+        else:
+            frontier_node = graph_mapper.nodes[frontier_id]
+            if not frontier_node.unexploredExits:
+                validation_results['frontier_management'] = False
+                validation_results['issues'].append(f"Frontier {frontier_id} has no unexplored exits")
+                print(f"   ❌ Empty frontier: {frontier_id}")
+    
+    # 4. ตรวจสอบ boundary checking
+    print("4. 🗺️ Validating Boundary Checking...")
+    
+    for node_id, node in graph_mapper.nodes.items():
+        x, y = node.position
+        if (x < graph_mapper.min_x or x > graph_mapper.max_x or 
+            y < graph_mapper.min_y or y > graph_mapper.max_y):
+            validation_results['boundary_checking'] = False
+            validation_results['issues'].append(f"Node {node_id} at {node.position} is outside boundaries")
+            print(f"   ❌ Node outside boundary: {node_id} at {node.position}")
+    
+    # สรุปผลการตรวจสอบ
+    print("\n📊 VALIDATION SUMMARY:")
+    all_valid = all(validation_results[key] for key in ['path_finding', 'coordinate_system', 'frontier_management', 'boundary_checking'])
+    
+    if all_valid:
+        print("✅ All backtracking logic checks PASSED!")
+    else:
+        print("❌ Some issues found:")
+        for issue in validation_results['issues']:
+            print(f"   - {issue}")
+    
+    print(f"   🗺️ Path Finding: {'✅' if validation_results['path_finding'] else '❌'}")
+    print(f"   🧭 Coordinate System: {'✅' if validation_results['coordinate_system'] else '❌'}")
+    print(f"   🚀 Frontier Management: {'✅' if validation_results['frontier_management'] else '❌'}")
+    print(f"   🗺️ Boundary Checking: {'✅' if validation_results['boundary_checking'] else '❌'}")
+    
+    return validation_results, all_valid
+
+def check_final_node_issues(graph_mapper, movement_controller):
+    """
+    ตรวจสอบปัญหาที่ node สุดท้าย รวมถึงการสร้าง wall ที่ไม่จำเป็น
+    """
+    print("\n🔍 === FINAL NODE ISSUE CHECK ===")
+    
+    issues_found = []
+    
+    # 1. ตรวจสอบ nodes ที่อาจมีปัญหา wall detection
+    print("1. 🧱 Checking for potential wall detection issues...")
+    
+    for node_id, node in graph_mapper.nodes.items():
+        # ตรวจสอบ node ที่มี wall ด้านซ้ายแต่ไม่มี neighbor
+        if node.walls.get('west', False):  # wall ด้านซ้าย
+            west_pos = graph_mapper.get_next_position_from(node.position, 'west')
+            west_node_id = graph_mapper.get_node_id(west_pos)
+            
+            # ถ้าไม่มี node ด้านซ้าย แต่มี wall ก็ปกติ (อาจเป็นขอบแมพ)
+            # แต่ถ้ามี node แล้วยังมี wall อาจเป็นปัญหา
+            if west_node_id in graph_mapper.nodes:
+                west_node = graph_mapper.nodes[west_node_id]
+                if not west_node.walls.get('east', False):
+                    issues_found.append(f"Node {node_id}: Left wall detected but neighbor {west_node_id} has no corresponding right wall")
+                    print(f"   ⚠️ Potential false wall at {node_id} (left)")
+    
+    # 2. ตรวจสอบ drift correction ที่ node สุดท้าย
+    print("2. 🔧 Checking drift correction status...")
+    
+    current_pos = graph_mapper.currentPosition
+    current_node = graph_mapper.get_current_node()
+    
+    if current_node:
+        drift_status = movement_controller.get_drift_correction_status()
+        nodes_until_next = drift_status['nodes_until_correction']
+        
+        if nodes_until_next <= 2:
+            issues_found.append(f"Close to drift correction trigger at final node (in {nodes_until_next} nodes)")
+            print(f"   ⚠️ Drift correction may trigger soon: {nodes_until_next} nodes remaining")
+        
+        # 3. ตรวจสอบ unexplored exits ที่ node ปัจจุบัน
+        print("3. 🔍 Checking unexplored exits at current node...")
+        
+        if current_node.unexploredExits:
+            print(f"   📍 Current node {current_node.id} still has unexplored exits: {current_node.unexploredExits}")
+            
+            for direction in current_node.unexploredExits:
+                target_pos = graph_mapper.get_next_position(direction)
+                if graph_mapper.is_position_within_boundaries(target_pos):
+                    issues_found.append(f"Node {current_node.id}: Unexplored exit {direction} within boundaries not yet explored")
+                    print(f"   ⚠️ Valid unexplored direction: {direction} -> {target_pos}")
+        else:
+            print(f"   ✅ Current node {current_node.id} fully explored")
+    
+    # 4. ตรวจสอบ frontier queue
+    print("4. 🚀 Checking frontier queue status...")
+    
+    if graph_mapper.frontierQueue:
+        print(f"   📍 Frontiers remaining: {len(graph_mapper.frontierQueue)}")
+        for frontier_id in graph_mapper.frontierQueue:
+            if frontier_id in graph_mapper.nodes:
+                frontier_node = graph_mapper.nodes[frontier_id]
+                print(f"     - {frontier_id}: {len(frontier_node.unexploredExits)} unexplored exits")
+    else:
+        print(f"   ✅ No frontiers remaining - exploration should be complete")
+    
+    # สรุปผล
+    print("\n📊 FINAL NODE CHECK SUMMARY:")
+    if not issues_found:
+        print("✅ No issues found at final exploration state!")
+    else:
+        print("⚠️ Issues detected:")
+        for issue in issues_found:
+            print(f"   - {issue}")
+    
+    return issues_found
+
+def coordinate_change_test(graph_mapper):
+    """
+    ทดสอบการเปลี่ยนแปลงพิกัดแมพและการปรับตัวของระบบ
+    """
+    print("\n🔍 === COORDINATE SYSTEM CHANGE TEST ===")
+    
+    # เก็บค่าเดิม
+    original_bounds = {
+        'min_x': graph_mapper.min_x,
+        'max_x': graph_mapper.max_x,
+        'min_y': graph_mapper.min_y,
+        'max_y': graph_mapper.max_y
+    }
+    
+    print(f"📏 Original boundaries: x[{original_bounds['min_x']},{original_bounds['max_x']}], y[{original_bounds['min_y']},{original_bounds['max_y']}]")
+    
+    # ทดสอบการขยาย boundaries
+    print("🔄 Testing boundary expansion...")
+    graph_mapper.min_x -= 1
+    graph_mapper.max_x += 1
+    graph_mapper.min_y -= 1
+    graph_mapper.max_y += 1
+    
+    print(f"📏 New boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
+    
+    # ตรวจสอบว่า nodes ที่มีอยู่ยังอยู่ในขอบเขตใหม่หรือไม่
+    nodes_still_valid = True
+    for node_id, node in graph_mapper.nodes.items():
+        if not graph_mapper.is_position_within_boundaries(node.position):
+            nodes_still_valid = False
+            print(f"   ❌ Node {node_id} at {node.position} now outside new boundaries")
+    
+    if nodes_still_valid:
+        print(f"   ✅ All existing nodes still within new boundaries")
+    
+    # ทดสอบการ rebuild frontier queue
+    original_frontier_count = len(graph_mapper.frontierQueue)
+    graph_mapper.rebuild_frontier_queue()
+    new_frontier_count = len(graph_mapper.frontierQueue)
+    
+    print(f"🚀 Frontier queue update: {original_frontier_count} -> {new_frontier_count}")
+    
+    # คืนค่าเดิม
+    graph_mapper.min_x = original_bounds['min_x']
+    graph_mapper.max_x = original_bounds['max_x']
+    graph_mapper.min_y = original_bounds['min_y']
+    graph_mapper.max_y = original_bounds['max_y']
+    
+    print(f"🔄 Restored original boundaries")
+    print(f"✅ Coordinate change test completed")
+    
+    return {
+        'boundary_expansion_handled': nodes_still_valid,
+        'frontier_queue_updated': new_frontier_count != original_frontier_count,
+        'original_frontier_count': original_frontier_count,
+        'new_frontier_count': new_frontier_count
+    }
+
+# ===== End of Logic Validation Functions =====
