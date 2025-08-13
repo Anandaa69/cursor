@@ -7,6 +7,7 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+import cv2
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
@@ -575,6 +576,8 @@ class GraphNode:
         self.marker = False
         self.markerSides = []
         self.markerIdsBySide = {}
+        self.redSides = []
+        self.visionDetections = {}
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
         
@@ -1583,6 +1586,38 @@ class MarkerVisionHandler:
         self.marker_detected = False
         self.markers.clear()
 
+# -------------------------------
+# ฟังก์ชันตรวจจับสีแดง
+# -------------------------------
+def detect_red(ep_camera, threshold_area=100, attempts=5):
+    """ตรวจจับสีแดงจากกล้องหน้า"""
+    try:
+        for _ in range(attempts):
+            try:
+                frame = ep_camera.read_cv2_image(strategy="newest", timeout=0.5)
+                if frame is None:
+                    continue
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                lower_red1 = np.array([0, 120, 70])
+                upper_red1 = np.array([10, 255, 255])
+                lower_red2 = np.array([170, 120, 70])
+                upper_red2 = np.array([180, 255, 255])
+                mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+                mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+                mask = mask1 | mask2
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in contours:
+                    if cv2.contourArea(cnt) > threshold_area:
+                        return True
+                time.sleep(0.05)
+            except Exception as e:
+                print(f"❌ Error reading frame: {e}")
+                time.sleep(0.1)
+        return False
+    except Exception as e:
+        print(f"❌ detect_red error: {e}")
+        return False
+
 # ===== Main Exploration Functions =====
 def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_handler, graph_mapper):
     """NEW: Scan current node and update graph with ABSOLUTE directions, plus marker scan per yaw (-90/0/90) and back at start"""
@@ -1614,32 +1649,63 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     scan_results = {}
     ep_chassis_fix = ep_robot.chassis
 
+    # Start camera stream for red detection
+    ep_camera = None
+    camera_started = False
+    try:
+        ep_camera = ep_robot.camera
+        ep_camera.start_video_stream(display=False, resolution="720p")
+        print("📹 Starting camera stream...")
+        time.sleep(1.0)
+        camera_started = True
+    except Exception as e:
+        print(f"❌ Error starting camera: {e}")
+
+    def record_detection(side_key, found_red=None, distance=None, marker_ids=None, valid_distance=None, reason=None):
+        if side_key not in current_node.visionDetections:
+            current_node.visionDetections[side_key] = {}
+        if found_red is not None:
+            current_node.visionDetections[side_key]['found_red'] = found_red
+        if distance is not None:
+            current_node.visionDetections[side_key]['distance'] = float(distance)
+        if marker_ids is not None:
+            current_node.visionDetections[side_key]['marker_ids'] = list(marker_ids)
+        if valid_distance is not None:
+            current_node.visionDetections[side_key]['valid_distance'] = bool(valid_distance)
+        if reason is not None:
+            current_node.visionDetections[side_key]['reason'] = reason
+
     def perform_marker_scan(direction_key, yaw_angle, distance_value):
         try:
-            if distance_value > 0 and distance_value <= 40.0:
+            # Gate by distance like red_scan (<= 50cm)
+            if distance_value > 0 and distance_value <= 50.0:
                 print("✅ Distance OK - Scanning for markers...")
                 marker_handler.reset_detection()
                 # Tilt down for better marker visibility
                 gimbal.moveto(pitch=-20, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
                 time.sleep(0.2)
-                detected = marker_handler.wait_for_markers(timeout=1.0)
+                detected = marker_handler.wait_for_markers(timeout=1.5)
                 # Return pitch to 0 at this yaw
                 gimbal.moveto(pitch=0, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
                 time.sleep(0.1)
                 if detected and marker_handler.markers:
                     marker_ids = [m.id for m in marker_handler.markers]
                     print(f"🎯 FOUND MARKERS at {direction_key.upper()}: {marker_ids}")
+                    record_detection(direction_key, marker_ids=marker_ids, valid_distance=True)
                     current_node.marker = True
                     if direction_key not in current_node.markerSides:
                         current_node.markerSides.append(direction_key)
                     current_node.markerIdsBySide[direction_key] = marker_ids
                 else:
                     print(f"❌ No markers found at {direction_key.upper()}")
+                    record_detection(direction_key, marker_ids=[], valid_distance=True, reason='no_marker')
             else:
                 if distance_value <= 0:
                     print(f"⏭️ Skip marker scan at {direction_key.upper()}: invalid ToF reading ({distance_value:.2f}cm)")
+                    record_detection(direction_key, valid_distance=False, reason='invalid_tof')
                 else:
-                    print(f"⏭️ Skip marker scan at {direction_key.upper()}: too far ({distance_value:.2f}cm > 40cm)")
+                    print(f"⏭️ Skip marker scan at {direction_key.upper()}: too far ({distance_value:.2f}cm > 50cm)")
+                    record_detection(direction_key, valid_distance=False, reason='distance_issue')
         except Exception as e:
             print(f"❌ Marker scan error at {direction_key.upper()}: {e}")
 
@@ -1658,10 +1724,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     scan_results['front'] = front_distance
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
 
-    # Marker scan for front at 0°
-    perform_marker_scan('front', 0, front_distance)
+    # Red pre-check for front at 0°
+    red_front = False
+    if camera_started and ep_camera is not None:
+        red_front = detect_red(ep_camera, threshold_area=100, attempts=5)
+    record_detection('front', found_red=red_front, distance=front_distance)
+    if red_front:
+        if 'front' not in current_node.redSides:
+            current_node.redSides.append('front')
+        perform_marker_scan('front', 0, front_distance)
+    else:
+        print("⏭️ No red detected at FRONT -> skip marker tilt")
 
-    if front_distance <= 19.0 :
+    if front_distance <= 19.0:
         move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
@@ -1682,10 +1757,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     scan_results['left'] = left_distance
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
 
-    # Marker scan for left at -90°
-    perform_marker_scan('left', -90, left_distance)
+    # Red pre-check for left at -90°
+    red_left = False
+    if camera_started and ep_camera is not None:
+        red_left = detect_red(ep_camera, threshold_area=100, attempts=5)
+    record_detection('left', found_red=red_left, distance=left_distance)
+    if red_left:
+        if 'left' not in current_node.redSides:
+            current_node.redSides.append('left')
+        perform_marker_scan('left', -90, left_distance)
+    else:
+        print("⏭️ No red detected at LEFT -> skip marker tilt")
 
-    # Special BACK scan at start node (with marker check)
+    # Special BACK scan at start node (with red gating + marker check)
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
         gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1717,8 +1801,17 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
             current_node.unexploredExits.remove(back_abs_dir)
             print(f"🧹 Removed BACK ({back_abs_dir}) from unexplored exits at start node")
 
-        # Marker scan for back at 180°
-        perform_marker_scan('back', 180, back_distance)
+        # Red pre-check for back at 180°
+        red_back = False
+        if camera_started and ep_camera is not None:
+            red_back = detect_red(ep_camera, threshold_area=100, attempts=5)
+        record_detection('back', found_red=red_back, distance=back_distance)
+        if red_back:
+            if 'back' not in current_node.redSides:
+                current_node.redSides.append('back')
+            perform_marker_scan('back', 180, back_distance)
+        else:
+            print("⏭️ No red detected at BACK -> skip marker tilt")
 
     if left_distance < 15:
         move_distance = 20 - left_distance
@@ -1748,12 +1841,28 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
 
-    # Marker scan for right at 90°
-    perform_marker_scan('right', 90, right_distance)
+    # Red pre-check for right at 90°
+    red_right = False
+    if camera_started and ep_camera is not None:
+        red_right = detect_red(ep_camera, threshold_area=100, attempts=5)
+    record_detection('right', found_red=red_right, distance=right_distance)
+    if red_right:
+        if 'right' not in current_node.redSides:
+            current_node.redSides.append('right')
+        perform_marker_scan('right', 90, right_distance)
+    else:
+        print("⏭️ No red detected at RIGHT -> skip marker tilt")
     
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
+    
+    # Stop camera stream if started
+    if camera_started and ep_camera is not None:
+        try:
+            ep_camera.stop_video_stream()
+        except Exception:
+            pass
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
@@ -1767,6 +1876,8 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    if current_node.redSides:
+        print(f"   🔴 Red detected on sides: {current_node.redSides}")
     if current_node.marker:
         print(f"   🏁 Marker detected on sides: {current_node.markerSides} -> {current_node.markerIdsBySide}")
     
