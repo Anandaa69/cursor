@@ -6,6 +6,7 @@ import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
+import os
 from collections import deque
 import cv2
 
@@ -1731,7 +1732,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
         ep_camera = ep_robot.camera
         ep_camera.start_video_stream(display=False, resolution="720p")
         print("📹 Starting camera stream...")
-        time.sleep(1.0)
+        time.sleep(0.5)
         camera_started = True
     except Exception as e:
         print(f"❌ Error starting camera: {e}")
@@ -1758,11 +1759,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
                 marker_handler.reset_detection()
                 # Tilt down for better marker visibility
                 gimbal.moveto(pitch=-20, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-                time.sleep(0.2)
-                detected = marker_handler.wait_for_markers(timeout=1.5)
+                time.sleep(0.1)
+                detected = marker_handler.wait_for_markers(timeout=0.6)
                 # Return pitch to 0 at this yaw
                 gimbal.moveto(pitch=0, yaw=yaw_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-                time.sleep(0.1)
+                time.sleep(0.08)
                 if detected and marker_handler.markers:
                     marker_ids = [m.id for m in marker_handler.markers]
                     print(f"🎯 FOUND MARKERS at {direction_key.upper()}: {marker_ids}")
@@ -1787,11 +1788,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.12)
     
     tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+    time.sleep(0.12)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     front_distance = tof_handler.get_average_distance('front')
@@ -1815,16 +1816,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
         move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.12)
     
     tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+    time.sleep(0.12)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     left_distance = tof_handler.get_average_distance('left')
@@ -1848,11 +1849,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
         gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.12)
 
         tof_handler.start_scanning('back')
-        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-        time.sleep(0.2)
+        sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+        time.sleep(0.12)
         tof_handler.stop_scanning(sensor.unsub_distance)
 
         back_distance = tof_handler.get_average_distance('back')
@@ -1892,16 +1893,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.3)
+        time.sleep(0.15)
 
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.12)
     
     tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+    time.sleep(0.12)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     right_distance = tof_handler.get_average_distance('right')
@@ -1912,7 +1913,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
         move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.3)
+        time.sleep(0.15)
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
 
@@ -1930,7 +1931,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.1)
     
     # Stop camera stream if started
     if camera_started and ep_camera is not None:
@@ -1941,7 +1942,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, marker_handler, tof_hand
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
-    time.sleep(0.2)
+    time.sleep(0.1)
     
     # Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
@@ -2249,6 +2250,7 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
 
 def save_graph_to_file(graph_mapper, filepath="/workspace/graph_map.json"):
     try:
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
         data = graph_mapper.to_dict()
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
