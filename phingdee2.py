@@ -1727,7 +1727,7 @@ def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_
     print(f"🎯 Scanning {direction_name} | Gimbal Yaw: {angle}° | Compass: {compass_dir}")
     
     # หมุน gimbal ไปยังมุมที่กำหนด
-    gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.3)  # รอให้กิมบอลเสถียร
     
     # วัดระยะทาง
@@ -1844,7 +1844,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
         direction_name = get_direction_name(yaw)
         print(f"\n🔄 หมุน Gimbal ไปที่ {direction_name} ({yaw}°) เพื่อตรวจจับสีแดง")
         
-        gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480)
         time.sleep(0.3)  # รอให้กล้องเสถียร
         
         found_red = detect_red(ep_camera, threshold_area=100, attempts=5)
@@ -1863,7 +1863,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
     if not red_angles:
         print("\n❌ ไม่เจอสีแดงในทิศทางใดเลย")
         # กลับไปตำแหน่งกลาง
-        gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
         chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         return results
 
@@ -1896,7 +1896,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
 
     # กลับไปตำแหน่งกลาง
     print(f"\n🔄 กลับสู่ตำแหน่งกลาง...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
     
     # ปลดล็อคล้อ
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
@@ -1953,7 +1953,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     # ===== SCAN FRONT (0°) - ToF + Red Detection =====
     print("🔍 Scanning FRONT (0°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -1982,12 +1982,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if front_distance <= 19.0:
         move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
     # ===== SCAN LEFT (-90°) - ToF + Red Detection =====
     print("🔍 Scanning LEFT (-90°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -2016,12 +2016,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if left_distance < 15:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
 
     # ===== SCAN RIGHT (90°) - ToF + Red Detection =====
     print("🔍 Scanning RIGHT (90°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -2050,13 +2050,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if right_distance < 15:
         move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
-        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed)
         time.sleep(0.2)
 
         # ToF scan for back
@@ -2113,7 +2113,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
             print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
             
             # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
-            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
             time.sleep(0.3)
             
             # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
@@ -2160,7 +2160,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
     
     # Return to center
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # Unlock wheels
