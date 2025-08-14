@@ -2664,73 +2664,6 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print("✅ ABSOLUTE DIRECTION EXPLORATION WITH RED-FILTERED MARKER DETECTION COMPLETE")
     print(f"{'='*60}")
 
-
-# 4. แก้ไขการตั้งค่า boundary ใน main
-if __name__ == '__main__':
-    print("🤖 Connecting to robot...")
-    ep_robot = robot.Robot()
-    ep_robot.initialize(conn_type="ap")
-    
-    ep_gimbal = ep_robot.gimbal
-    ep_chassis = ep_robot.chassis
-    ep_sensor = ep_robot.sensor
-    ep_vision = ep_robot.vision
-    
-    # Initialize components with STRICTER boundaries
-    tof_handler = ToFSensorHandler()
-    graph_mapper = GraphMapper(min_x=-1, min_y=-1, max_x=1, max_y=1)  # 3x3 grid
-    movement_controller = MovementController(ep_chassis)
-    attitude_handler = AttitudeHandler()
-    attitude_handler.start_monitoring(ep_chassis)
-    
-    # NEW: Initialize marker detection system
-    marker_handler = MarkerVisionHandler()
-    print("🎯 Initializing marker detection system...")
-    marker_detection_active = marker_handler.start_continuous_detection(ep_vision)
-    if marker_detection_active:
-        print("✅ Marker detection system activated")
-    else:
-        print("⚠️ Marker detection system failed to activate - continuing without markers")
-        marker_handler = None
-    
-    # ✅ เพิ่มการแสดงข้อมูล boundary
-    boundary_info = graph_mapper.get_boundary_status()
-    print(f"🗺️ MAP BOUNDARIES CONFIGURED:")
-    print(f"   📏 X range: [{boundary_info['min_x']}, {boundary_info['max_x']}]")
-    print(f"   📏 Y range: [{boundary_info['min_y']}, {boundary_info['max_y']}]")
-    print(f"   📐 Map size: {boundary_info['width']}x{boundary_info['height']} = {boundary_info['total_cells']} cells")
-    print(f"   🎯 Valid positions: Only within these boundaries!")
-    
-    try:
-        print("✅ Recalibrating gimbal...")
-        ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
-        ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
-        time.sleep(0.3)
-        
-        print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-        
-        # Start autonomous exploration with absolute directions
-        explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
-            
-    except KeyboardInterrupt:
-        print("\n⚠️ Interrupted by user")
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        try:
-            ep_sensor.unsub_distance()
-            if marker_handler:
-                marker_handler.stop_continuous_detection(ep_vision)
-            movement_controller.cleanup()
-            attitude_handler.stop_monitoring(ep_chassis)
-        except:
-            pass
-        ep_robot.close()
-        print("🔌 Connection closed")
-
 # ===== Logic Validation and Improvement Functions =====
 
 def validate_backtracking_logic(graph_mapper, movement_controller):
@@ -2964,3 +2897,69 @@ def coordinate_change_test(graph_mapper):
     }
 
 # ===== End of Logic Validation Functions =====
+
+# 4. แก้ไขการตั้งค่า boundary ใน main
+if __name__ == '__main__':
+    print("🤖 Connecting to robot...")
+    ep_robot = robot.Robot()
+    ep_robot.initialize(conn_type="ap")
+    
+    ep_gimbal = ep_robot.gimbal
+    ep_chassis = ep_robot.chassis
+    ep_sensor = ep_robot.sensor
+    ep_vision = ep_robot.vision
+    
+    # Initialize components with STRICTER boundaries
+    tof_handler = ToFSensorHandler()
+    graph_mapper = GraphMapper(min_x=-1, min_y=-1, max_x=1, max_y=1)  # 3x3 grid
+    movement_controller = MovementController(ep_chassis)
+    attitude_handler = AttitudeHandler()
+    attitude_handler.start_monitoring(ep_chassis)
+    
+    # NEW: Initialize marker detection system
+    marker_handler = MarkerVisionHandler()
+    print("🎯 Initializing marker detection system...")
+    marker_detection_active = marker_handler.start_continuous_detection(ep_vision)
+    if marker_detection_active:
+        print("✅ Marker detection system activated")
+    else:
+        print("⚠️ Marker detection system failed to activate - continuing without markers")
+        marker_handler = None
+    
+    # ✅ เพิ่มการแสดงข้อมูล boundary
+    boundary_info = graph_mapper.get_boundary_status()
+    print(f"🗺️ MAP BOUNDARIES CONFIGURED:")
+    print(f"   📏 X range: [{boundary_info['min_x']}, {boundary_info['max_x']}]")
+    print(f"   📏 Y range: [{boundary_info['min_y']}, {boundary_info['max_y']}]")
+    print(f"   📐 Map size: {boundary_info['width']}x{boundary_info['height']} = {boundary_info['total_cells']} cells")
+    print(f"   🎯 Valid positions: Only within these boundaries!")
+    
+    try:
+        print("✅ Recalibrating gimbal...")
+        ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
+        ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
+        time.sleep(0.3)
+        
+        print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
+        
+        # Start autonomous exploration with absolute directions
+        explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
+                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        try:
+            ep_sensor.unsub_distance()
+            if marker_handler:
+                marker_handler.stop_continuous_detection(ep_vision)
+            movement_controller.cleanup()
+            attitude_handler.stop_monitoring(ep_chassis)
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 Connection closed")
