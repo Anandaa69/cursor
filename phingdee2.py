@@ -1980,9 +1980,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if front_distance <= 19.0:
-        move_distance = -(23 - front_distance)
-        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        move_distance = -(23 - front_distance)  # cm, negative means move backward
+        move_m = move_distance / 100.0
+        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {abs(move_m):.2f}m")
+        try:
+            chassis.move(x=move_m, y=0, xy_speed=0.2).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ FRONT adjust move skipped: {e}")
         time.sleep(0.2)
 
     # ===== SCAN LEFT (-90°) - ToF + Red Detection =====
@@ -2014,9 +2018,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if left_distance < 15:
-        move_distance = 20 - left_distance
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        move_distance = 20 - left_distance  # cm
+        move_m = move_distance / 100.0
+        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Shifting right {move_m:.2f}m")
+        try:
+            chassis.move(x=0.01, y=move_m, xy_speed=0.5).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ LEFT adjust move skipped: {e}")
         time.sleep(0.3)
 
     # ===== SCAN RIGHT (90°) - ToF + Red Detection =====
@@ -2048,9 +2056,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if right_distance < 15:
-        move_distance = -(21 - right_distance)
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        move_distance = -(21 - right_distance)  # cm, negative means shift left
+        move_m = move_distance / 100.0
+        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Shifting left {abs(move_m):.2f}m")
+        try:
+            chassis.move(x=0.01, y=move_m, xy_speed=0.5).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ RIGHT adjust move skipped: {e}")
         time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
