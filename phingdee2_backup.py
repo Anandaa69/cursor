@@ -2015,44 +2015,44 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         except Exception as e:
             print(f"⚠️ Cannot start video stream for red detection: {e}")
             ep_camera = None
-
+    
     # ===== SCAN FRONT (0°) - ToF + Red Detection =====
     print("🔍 Scanning FRONT (0°) - ToF + Red Detection...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-     
-     # ตรวจสอบว่าทิศทางหน้าอยู่นอกขอบเขตแมพหรือไม่
-     front_target_pos = graph_mapper.get_next_position(graph_mapper.currentDirection)
-     
-     if not graph_mapper.is_position_within_boundaries(front_target_pos):
-         print(f"🚫 FRONT direction leads to {front_target_pos} which is OUTSIDE map boundaries!")
-         print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
-         # จำลองการเจอกำแพงที่ขอบแมพ
-         front_distance = 30.0  # ระยะปลอม
-         front_wall = True      # บังคับให้เป็นกำแพง
-         scan_results['front'] = front_distance
-         print(f"📏 FRONT ToF result: {front_distance:.2f}cm - WALL (BOUNDARY)")
-     else:
-         # ToF scan ปกติ
-         tof_handler.start_scanning('front')
-         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-         time.sleep(0.2)
-         tof_handler.stop_scanning(sensor.unsub_distance)
-         
-         front_distance = tof_handler.get_average_distance('front')
-         front_wall = tof_handler.is_wall_detected('front')
-         scan_results['front'] = front_distance
-         
-         print(f"📏 FRONT ToF result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-         
-         # Red detection at FRONT
-         if ep_camera and front_distance > 0 and front_distance <= 40.0:
-             print("🔴 Checking for red color at FRONT...")
-             found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
-             if found_red:
-                 print("✅ RED DETECTED at FRONT!")
-                 red_directions.append(('front', 0))
-             else:
+    
+    # ตรวจสอบว่าทิศทางหน้าอยู่นอกขอบเขตแมพหรือไม่
+    front_target_pos = graph_mapper.get_next_position(graph_mapper.currentDirection)
+    
+    if not graph_mapper.is_position_within_boundaries(front_target_pos):
+        print(f"🚫 FRONT direction leads to {front_target_pos} which is OUTSIDE map boundaries!")
+        print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
+        # จำลองการเจอกำแพงที่ขอบแมพ
+        front_distance = 30.0  # ระยะปลอม
+        front_wall = True      # บังคับให้เป็นกำแพง
+        scan_results['front'] = front_distance
+        print(f"📏 FRONT ToF result: {front_distance:.2f}cm - WALL (BOUNDARY)")
+    else:
+        # ToF scan ปกติ
+        tof_handler.start_scanning('front')
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        front_distance = tof_handler.get_average_distance('front')
+        front_wall = tof_handler.is_wall_detected('front')
+        scan_results['front'] = front_distance
+        
+        print(f"📏 FRONT ToF result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
+        
+        # Red detection at FRONT
+        if ep_camera and front_distance > 0 and front_distance <= 40.0:
+            print("🔴 Checking for red color at FRONT...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at FRONT!")
+                red_directions.append(('front', 0))
+                         else:
                  print("❌ No red at FRONT")
 
          # Position adjustment if too close
@@ -2120,18 +2120,26 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
     
-    # Check if RIGHT is outside map boundaries
-    right_direction_map = {'north': 'east', 'south': 'west', 'east': 'south', 'west': 'north'}
-    right_abs_dir = right_direction_map[graph_mapper.currentDirection]
-    right_target_pos = graph_mapper.get_next_position(right_abs_dir)
+    # ตรวจสอบว่าทิศทางขวาอยู่นอกขอบเขตแมพหรือไม่
+    right_direction_map = {
+        'north': 'east',
+        'south': 'west', 
+        'east': 'south',
+        'west': 'north'
+    }
+    right_absolute_direction = right_direction_map[graph_mapper.currentDirection]
+    right_target_pos = graph_mapper.get_next_position(right_absolute_direction)
     
     if not graph_mapper.is_position_within_boundaries(right_target_pos):
-        print(f"🚫 RIGHT leads to {right_target_pos} OUTSIDE boundaries!")
-        right_distance, right_wall = 30.0, True
+        print(f"🚫 RIGHT direction leads to {right_target_pos} which is OUTSIDE map boundaries!")
+        print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
+        # จำลองการเจอกำแพงที่ขอบแมพ
+        right_distance = 30.0  # ระยะปลอม
+        right_wall = True      # บังคับให้เป็นกำแพง
         scan_results['right'] = right_distance
-        print(f"📏 RIGHT: {right_distance:.2f}cm - WALL (BOUNDARY)")
+        print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - WALL (BOUNDARY)")
     else:
-        # Normal scan
+        # ToF scan ปกติ
         tof_handler.start_scanning('right')
         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
         time.sleep(0.2)
@@ -2140,16 +2148,25 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         right_distance = tof_handler.get_average_distance('right')
         right_wall = tof_handler.is_wall_detected('right')
         scan_results['right'] = right_distance
-        print(f"📏 RIGHT: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+
+        print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
         
+        # Red detection at RIGHT
         if ep_camera and right_distance > 0 and right_distance <= 40.0:
-            print("🔴 Checking red at RIGHT...")
-            if detect_red(ep_camera, threshold_area=100, attempts=3):
-                print("✅ RED at RIGHT!")
+            print("🔴 Checking for red color at RIGHT...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at RIGHT!")
                 red_directions.append(('right', 90))
             else:
                 print("❌ No red at RIGHT")
 
+                 # Position adjustment if too close
+         if right_distance < 15:
+             move_distance = -(21 - right_distance)
+             print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
+             chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+             time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
