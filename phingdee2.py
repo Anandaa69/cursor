@@ -736,7 +736,8 @@ class GraphMapper:
 
         # Override methods เพื่อใช้ priority-based exploration
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
-        self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+        # ✅ KEEP the absolute version for proper boundary checking
+        # self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
 
     # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
     def is_position_within_boundaries(self, position):
@@ -816,17 +817,17 @@ class GraphMapper:
             node.outOfBoundsCount = 0
 
             x, y = node.position
-        
-        possible_directions = {
-            'north': (x, y + 1),
-            'south': (x, y - 1),
-            'east':  (x + 1, y),
-            'west':  (x - 1, y)
-        }
+            
+            possible_directions = {
+                'north': (x, y + 1),
+                'south': (x, y - 1),
+                'east':  (x + 1, y),
+                'west':  (x - 1, y)
+            }
 
-        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-        print(f"🔍 Wall status: {node.walls}")
-        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+            print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
+            print(f"🔍 Wall status: {node.walls}")
+            print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
 
             for direction, (target_x, target_y) in possible_directions.items():
                 try:
@@ -842,43 +843,43 @@ class GraphMapper:
                     if is_outer_boundary:
                         print(f"      🌐 Boundary check: {(target_x, target_y)} outside [{self.min_x},{self.max_x}] x [{self.min_y},{self.max_y}]")
 
-            # เช็ค wall / explored / target exist
-            is_blocked = node.walls.get(direction, True)
-            already_explored = direction in node.exploredDirections
-            target_exists = target_node_id in self.nodes
-            target_fully_explored = False
-            target_has_unexplored_exits = False
-            
-            if target_exists:
-                target_node = self.nodes[target_node_id]
-                target_fully_explored = target_node.fullyScanned
-                # ✅ NEW: Check if target node still has unexplored exits
-                target_has_unexplored_exits = len(target_node.unexploredExits) > 0
+                                # เช็ค wall / explored / target exist
+                    is_blocked = node.walls.get(direction, True)
+                    already_explored = direction in node.exploredDirections
+                    target_exists = target_node_id in self.nodes
+                    target_fully_explored = False
+                    target_has_unexplored_exits = False
+                    
+                    if target_exists:
+                        target_node = self.nodes[target_node_id]
+                        target_fully_explored = target_node.fullyScanned
+                        # ✅ NEW: Check if target node still has unexplored exits
+                        target_has_unexplored_exits = len(target_node.unexploredExits) > 0
 
-            print(f"   🔍 Direction {direction}:")
-            print(f"      🚧 Blocked: {is_blocked}")
-            print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🗃️  Target exists: {target_exists}")
-            print(f"      🔍 Target fully explored: {target_fully_explored}")
-            print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
-            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+                    print(f"   🔍 Direction {direction}:")
+                    print(f"      🚧 Blocked: {is_blocked}")
+                    print(f"      ✅ Already explored: {already_explored}")
+                    print(f"      🗃️  Target exists: {target_exists}")
+                    print(f"      🔍 Target fully explored: {target_fully_explored}")
+                    print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
+                    print(f"      🌐 Is outer boundary: {is_outer_boundary}")
 
-            # ✅ FIXED: More flexible exploration logic
-            should_explore = (
-                not is_blocked and
-                not already_explored and
-                (not target_exists or not target_fully_explored or target_has_unexplored_exits)
-            )
+                    # ✅ FIXED: More flexible exploration logic
+                    should_explore = (
+                        not is_blocked and
+                        not already_explored and
+                        (not target_exists or not target_fully_explored or target_has_unexplored_exits)
+                    )
 
-            if should_explore:
-                if is_outer_boundary:
-                    node.outOfBoundsExits.append(direction)
-                    node.outOfBoundsCount = len(node.outOfBoundsExits)
-                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
-                else:
-                    node.unexploredExits.append(direction)
-                    print(f"      ✅ ADDED to unexplored exits!")
-                                else:
+                    if should_explore:
+                        if is_outer_boundary:
+                            node.outOfBoundsExits.append(direction)
+                            node.outOfBoundsCount = len(node.outOfBoundsExits)
+                            print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                        else:
+                            node.unexploredExits.append(direction)
+                            print(f"      ✅ ADDED to unexplored exits!")
+                    else:
                         print(f"      ❌ NOT added to unexplored exits")
 
                 except Exception as e:
