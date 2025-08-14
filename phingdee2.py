@@ -812,7 +812,7 @@ class GraphMapper:
         node.outOfBoundsCount = 0
 
         x, y = node.position
-
+        
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
@@ -824,11 +824,10 @@ class GraphMapper:
         print(f"🔍 Wall status: {node.walls}")
         print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
 
-        for direction, target_pos in possible_directions.items():
-            target_x, target_y = target_pos
-            target_node_id = self.get_node_id(target_pos)
-
-            # === ✅ แก้ไขการเช็ค outer border ===
+        for direction, (target_x, target_y) in possible_directions.items():
+            target_node_id = self.get_node_id((target_x, target_y))
+            
+            # Check if target is outside map boundaries
             is_outer_boundary = (
                 target_x < self.min_x or target_x > self.max_x or
                 target_y < self.min_y or target_y > self.max_y
@@ -839,21 +838,27 @@ class GraphMapper:
             already_explored = direction in node.exploredDirections
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
+            target_has_unexplored_exits = False
+            
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
+                # ✅ NEW: Check if target node still has unexplored exits
+                target_has_unexplored_exits = len(target_node.unexploredExits) > 0
 
             print(f"   🔍 Direction {direction}:")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
             print(f"      🗃️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
+            print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
             print(f"      🌐 Is outer boundary: {is_outer_boundary}")
 
+            # ✅ FIXED: More flexible exploration logic
             should_explore = (
                 not is_blocked and
                 not already_explored and
-                (not target_exists or not target_fully_explored)
+                (not target_exists or not target_fully_explored or target_has_unexplored_exits)
             )
 
             if should_explore:
@@ -1086,15 +1091,16 @@ class GraphMapper:
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
         
-        # Mark this direction as explored from the previous node
+        # ✅ FIXED: Don't mark direction as explored immediately
+        # Only remove from unexplored exits when we actually move
         if hasattr(self, 'previous_node') and self.previous_node:
-            if target_direction not in self.previous_node.exploredDirections:
-                self.previous_node.exploredDirections.append(target_direction)
-            
-            # Remove from unexplored exits
+            # Remove from unexplored exits since we're moving in this direction
             if target_direction in self.previous_node.unexploredExits:
                 self.previous_node.unexploredExits.remove(target_direction)
                 print(f"🔄 Removed {target_direction} from unexplored exits of {self.previous_node.id}")
+            
+            # ✅ NEW: Mark as explored only after we scan the target node
+            # This will be done in the main exploration loop after scanning
         
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
@@ -1217,19 +1223,25 @@ class GraphMapper:
             already_explored = absolute_dir in node.exploredDirections
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
+            target_has_unexplored_exits = False
+            
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
+                # ✅ NEW: Check if target node still has unexplored exits
+                target_has_unexplored_exits = len(target_node.unexploredExits) > 0
             
             print(f"   📍 {relative_dir} ({absolute_dir}):")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
             print(f"      🏗️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
+            print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
             
+            # ✅ FIXED: More flexible exploration logic
             should_explore = (not is_blocked and 
                             not already_explored and 
-                            (not target_exists or not target_fully_explored))
+                            (not target_exists or not target_fully_explored or target_has_unexplored_exits))
             
             if should_explore:
                 node.unexploredExits.append(absolute_dir)
@@ -1422,14 +1434,15 @@ class GraphMapper:
                 if target_exists:
                     target_node = self.nodes[target_node_id]
                     target_fully_explored = target_node.fullyScanned
-                    print(f"      🎯 {exit_direction} -> {target_pos}: exists={target_exists}, fully_explored={target_fully_explored}")
+                    target_has_unexplored = len(target_node.unexploredExits) > 0
+                    print(f"      🎯 {exit_direction} -> {target_pos}: exists={target_exists}, fully_explored={target_fully_explored}, has_unexplored={target_has_unexplored}")
                     
-                    # Only consider it unexplored if target doesn't exist or isn't fully explored
-                    if not target_fully_explored:
+                    # ✅ FIXED: More flexible validation - consider valid if target doesn't exist, isn't fully explored, OR still has unexplored exits
+                    if not target_fully_explored or target_has_unexplored:
                         valid_exits.append(exit_direction)
                         print(f"         ✅ Still valid for exploration")
                     else:
-                        print(f"         ❌ Target already fully explored")
+                        print(f"         ❌ Target fully explored with no unexplored exits")
                 else:
                     valid_exits.append(exit_direction)
                     print(f"      🎯 {exit_direction} -> {target_pos}: NEW AREA - valid for exploration")
@@ -1517,11 +1530,13 @@ class GraphMapper:
                     target_exists = target_node_id in self.nodes
                     if target_exists:
                         target_node = self.nodes[target_node_id]
-                        if not target_node.fullyScanned:
+                        target_has_unexplored = len(target_node.unexploredExits) > 0
+                        # ✅ FIXED: More flexible validation
+                        if not target_node.fullyScanned or target_has_unexplored:
                             valid_exits.append(exit_direction)
-                            print(f"      ✅ {exit_direction} -> {target_pos}: Target not fully explored")
+                            print(f"      ✅ {exit_direction} -> {target_pos}: Target not fully explored or has unexplored exits")
                         else:
-                            print(f"      ❌ {exit_direction} -> {target_pos}: Target already fully explored")
+                            print(f"      ❌ {exit_direction} -> {target_pos}: Target fully explored with no unexplored exits")
                     else:
                         valid_exits.append(exit_direction)
                         print(f"      ✅ {exit_direction} -> {target_pos}: NEW AREA")
@@ -2231,6 +2246,31 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
             print("🔍 NEW NODE - Performing full scan...")
             scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler, ep_robot)
             scanning_iterations += 1
+            
+            # ✅ NEW: Mark the direction as explored from previous node after successful scan
+            if hasattr(graph_mapper, 'previous_node') and graph_mapper.previous_node:
+                # Find the direction we came from
+                prev_pos = graph_mapper.previous_node.position
+                curr_pos = current_node.position
+                
+                # Calculate the direction from previous to current
+                dx = curr_pos[0] - prev_pos[0]
+                dy = curr_pos[1] - prev_pos[1]
+                
+                if dx == 1 and dy == 0:
+                    came_from_direction = 'east'
+                elif dx == -1 and dy == 0:
+                    came_from_direction = 'west'
+                elif dx == 0 and dy == 1:
+                    came_from_direction = 'north'
+                elif dx == 0 and dy == -1:
+                    came_from_direction = 'south'
+                else:
+                    came_from_direction = None
+                
+                if came_from_direction and came_from_direction not in graph_mapper.previous_node.exploredDirections:
+                    graph_mapper.previous_node.exploredDirections.append(came_from_direction)
+                    print(f"✅ Marked {came_from_direction} as explored from {graph_mapper.previous_node.id} after scanning")
             
             # Check if this scan revealed a dead end
             if graph_mapper.is_dead_end(current_node):
