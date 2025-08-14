@@ -2109,52 +2109,103 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print(f"\n🎯 === MARKER SCANNING (Red-filtered) ===")
         print(f"🔴 Found red in {len(red_directions)} directions: {[d[0] for d in red_directions]}")
         
+        # ตั้ง timeout ให้การตรวจ marker เร็วขึ้น
+        try:
+            marker_handler.detection_timeout = 0.8
+        except Exception:
+            pass
+        
+        per_direction_timeout_sec = 2.0
+        
         for direction_name, angle in red_directions:
             print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
+            direction_start_ts = time.time()
             
-            # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
-            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
-            time.sleep(0.3)
-            
-            # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
-            tof_handler.start_scanning('marker_scan')
-            sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-            time.sleep(0.15)
-            tof_handler.stop_scanning(sensor.unsub_distance)
-            
-            marker_distance = tof_handler.get_average_distance('marker_scan')
-            print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
-            
-            # ตรวจ marker
-            marker_ids = []
-            if marker_distance > 0 and marker_distance <= 40.0:
-                print("   ✅ Distance OK - Scanning for markers...")
-                marker_handler.reset_detection()
-                detected = marker_handler.wait_for_markers(timeout=1.0)
+            try:
+                # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
+                gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
+                time.sleep(0.3)
                 
-                if detected and marker_handler.markers:
-                    marker_ids = [m.id for m in marker_handler.markers]
-                    print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                # ตรวจ timeout เฟสหมุน
+                if (time.time() - direction_start_ts) > per_direction_timeout_sec:
+                    print(f"⚠️ Timeout while positioning gimbal for {direction_name} - skipping")
+                    continue
+                
+                # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
+                tof_handler.start_scanning('marker_scan')
+                sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+                time.sleep(0.15)
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
+                marker_distance = tof_handler.get_average_distance('marker_scan')
+                print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
+                
+                # ตรวจ timeout เฟส ToF
+                if (time.time() - direction_start_ts) > per_direction_timeout_sec:
+                    print(f"⚠️ Timeout after distance read for {direction_name} - skipping marker detect")
+                    current_node.markerScanResults[direction_name] = {
+                        'marker_ids': [],
+                        'distance': marker_distance,
+                        'direction_name': direction_name,
+                        'angle': angle,
+                        'compass_direction': get_compass_direction(angle),
+                        'timestamp': datetime.now().isoformat(),
+                        'found_red': True,
+                        'reason': 'timeout_after_distance'
+                    }
+                    continue
+                
+                # ตรวจ marker
+                marker_ids = []
+                if marker_distance > 0 and marker_distance <= 40.0:
+                    print("   ✅ Distance OK - Scanning for markers...")
+                    marker_handler.reset_detection()
+                    detected = marker_handler.wait_for_markers(timeout=marker_handler.detection_timeout)
+                    
+                    if detected and marker_handler.markers:
+                        marker_ids = [m.id for m in marker_handler.markers]
+                        print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                    else:
+                        print(f"   ❌ No markers found")
                 else:
-                    print(f"   ❌ No markers found")
-            else:
-                print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                    print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                
+                # เก็บผลลัพธ์
+                current_node.markerScanResults[direction_name] = {
+                    'marker_ids': marker_ids,
+                    'distance': marker_distance,
+                    'direction_name': direction_name,
+                    'angle': angle,
+                    'compass_direction': get_compass_direction(angle),
+                    'timestamp': datetime.now().isoformat(),
+                    'found_red': True
+                }
+                
+                if marker_ids:
+                    current_node.markersFound[direction_name] = marker_ids
+                    current_node.hasMarkers = True
+                    print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
             
-            # เก็บผลลัพธ์
-            current_node.markerScanResults[direction_name] = {
-                'marker_ids': marker_ids,
-                'distance': marker_distance,
-                'direction_name': direction_name,
-                'angle': angle,
-                'compass_direction': get_compass_direction(angle),
-                'timestamp': datetime.now().isoformat(),
-                'found_red': True
-            }
+            except Exception as e:
+                print(f"❌ Error during marker scanning at {direction_name}: {e}")
+                try:
+                    tof_handler.stop_scanning(sensor.unsub_distance)
+                except Exception:
+                    pass
+                current_node.markerScanResults[direction_name] = {
+                    'marker_ids': [],
+                    'distance': 0.0,
+                    'direction_name': direction_name,
+                    'angle': angle,
+                    'compass_direction': get_compass_direction(angle),
+                    'timestamp': datetime.now().isoformat(),
+                    'found_red': True,
+                    'reason': 'exception'
+                }
+                continue
             
-            if marker_ids:
-                current_node.markersFound[direction_name] = marker_ids
-                current_node.hasMarkers = True
-                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
+            # เฟรมเว้นเพื่อความเสถียรระหว่างทิศ
+            time.sleep(0.1)
     
     elif marker_handler:
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
