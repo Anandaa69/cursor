@@ -671,89 +671,103 @@ class GraphMapper:
     # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
     def update_unexplored_exits_absolute(self, node):
         """Update unexplored exits using ABSOLUTE directions + outer border check"""
-        node.unexploredExits = []
-        node.outOfBoundsExits = []
-        node.outOfBoundsCount = 0
+        try:
+            node.unexploredExits = []
+            node.outOfBoundsExits = []
+            node.outOfBoundsCount = 0
 
-        x, y = node.position
+            x, y = node.position
 
-        possible_directions = {
-            'north': (x, y + 1),
-            'south': (x, y - 1),
-            'east':  (x + 1, y),
-            'west':  (x - 1, y)
-        }
+            possible_directions = {
+                'north': (x, y + 1),
+                'south': (x, y - 1),
+                'east':  (x + 1, y),
+                'west':  (x - 1, y)
+            }
 
-        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-        print(f"🔍 Wall status: {node.walls}")
-        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+            print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
+            print(f"🔍 Wall status: {node.walls}")
+            print(f"🤖 Robot facing: {self.currentDirection}")
 
-        for direction, target_pos in possible_directions.items():
-            target_x, target_y = target_pos
-            target_node_id = self.get_node_id(target_pos)
+            for direction, target_pos in possible_directions.items():
+                try:
+                    target_x, target_y = target_pos
+                    target_node_id = self.get_node_id(target_pos)
 
-            # === ✅ แก้ไขการเช็ค outer border ===
-            is_outer_boundary = (
-                target_x < self.min_x or target_x > self.max_x or
-                target_y < self.min_y or target_y > self.max_y
-            )
+                    # === ✅ แก้ไขการเช็ค outer border ===
+                    is_outer_boundary = (
+                        target_x < self.min_x or target_x > self.max_x or
+                        target_y < self.min_y or target_y > self.max_y
+                    )
 
-            # เช็ค wall / explored / target exist
-            is_blocked = node.walls.get(direction, True)
-            already_explored = direction in node.exploredDirections
-            target_exists = target_node_id in self.nodes
-            target_fully_explored = False
-            if target_exists:
-                target_node = self.nodes[target_node_id]
-                target_fully_explored = target_node.fullyScanned
+                    # เช็ค wall / explored / target exist
+                    is_blocked = node.walls.get(direction, True)
+                    already_explored = direction in node.exploredDirections
+                    target_exists = target_node_id in self.nodes
+                    target_fully_explored = False
+                    if target_exists:
+                        target_node = self.nodes[target_node_id]
+                        target_fully_explored = target_node.fullyScanned
 
-            print(f"   🔍 Direction {direction}:")
-            print(f"      🚧 Blocked: {is_blocked}")
-            print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🗃️  Target exists: {target_exists}")
-            print(f"      🔍 Target fully explored: {target_fully_explored}")
-            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+                    print(f"   📍 {direction} ({target_pos}):")
+                    print(f"      🚧 Blocked: {is_blocked}")
+                    print(f"      ✅ Already explored: {already_explored}")
+                    print(f"      🏗️  Target exists: {target_exists}")
+                    print(f"      🔍 Target fully explored: {target_fully_explored}")
+                    print(f"      🌐 Is outer boundary: {is_outer_boundary}")
 
-            should_explore = (
-                not is_blocked and
-                not already_explored and
-                (not target_exists or not target_fully_explored)
-            )
+                    should_explore = (
+                        not is_blocked and
+                        not already_explored and
+                        (not target_exists or not target_fully_explored)
+                    )
 
-            if should_explore:
-                if is_outer_boundary:
-                    node.outOfBoundsExits.append(direction)
-                    node.outOfBoundsCount = len(node.outOfBoundsExits)
-                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
-                else:
-                    node.unexploredExits.append(direction)
-                    print(f"      ✅ ADDED to unexplored exits!")
-            else:
-                print(f"      ❌ NOT added to unexplored exits")
+                    if should_explore:
+                        if is_outer_boundary:
+                            node.outOfBoundsExits.append(direction)
+                            node.outOfBoundsCount = len(node.outOfBoundsExits)
+                            print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                        else:
+                            node.unexploredExits.append(direction)
+                            print(f"      ✅ ADDED to unexplored exits! (Priority: {direction})")
+                    else:
+                        print(f"      ❌ NOT added to unexplored exits")
 
-        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
+                except Exception as e:
+                    print(f"      ❌ Error processing direction {direction}: {e}")
+                    continue
 
-        # Frontier queue update
-        has_unexplored = len(node.unexploredExits) > 0
-        if has_unexplored and node.id not in self.frontierQueue:
-            self.frontierQueue.append(node.id)
-            print(f"🚀 Added {node.id} to frontier queue")
-        elif not has_unexplored and node.id in self.frontierQueue:
-            self.frontierQueue.remove(node.id)
-            print(f"🧹 Removed {node.id} from frontier queue")
+            print(f"🎯 Final unexplored exits (ordered by priority): {node.unexploredExits}")
+            print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits}")
 
-        # Dead end detection
-        blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        node.isDeadEnd = blocked_count >= 3
-        if node.isDeadEnd:
-            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
-            if node.id in self.frontierQueue:
-                self.frontierQueue.remove(node.id)
-                print(f"🧹 Removed dead end {node.id} from frontier queue")
+            # Frontier queue update with error handling
+            try:
+                has_unexplored = len(node.unexploredExits) > 0
+                if has_unexplored and node.id not in self.frontierQueue:
+                    self.frontierQueue.append(node.id)
+                    print(f"🚀 Added {node.id} to frontier queue")
+                elif not has_unexplored and node.id in self.frontierQueue:
+                    self.frontierQueue.remove(node.id)
+                    print(f"🧹 Removed {node.id} from frontier queue")
 
+                # Dead end detection
+                blocked_count = sum(1 for blocked in node.walls.values() if blocked)
+                node.isDeadEnd = blocked_count >= 3
+                if node.isDeadEnd:
+                    print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
+                    if node.id in self.frontierQueue:
+                        self.frontierQueue.remove(node.id)
+                        print(f"🧹 Removed dead end {node.id} from frontier queue")
+            except Exception as e:
+                print(f"⚠️ Error updating frontier queue: {e}")
 
-    
+        except Exception as e:
+            print(f"❌ Critical error in update_unexplored_exits_absolute: {e}")
+            # Initialize with safe defaults
+            node.unexploredExits = []
+            node.outOfBoundsExits = []
+            node.outOfBoundsCount = 0
+
     def build_connections(self):
         """Build connections between adjacent nodes"""
         for node_id, node in self.nodes.items():
