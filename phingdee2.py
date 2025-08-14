@@ -1727,7 +1727,7 @@ def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_
     print(f"🎯 Scanning {direction_name} | Gimbal Yaw: {angle}° | Compass: {compass_dir}")
     
     # หมุน gimbal ไปยังมุมที่กำหนด
-    gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.3)  # รอให้กิมบอลเสถียร
     
     # วัดระยะทาง
@@ -1844,7 +1844,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
         direction_name = get_direction_name(yaw)
         print(f"\n🔄 หมุน Gimbal ไปที่ {direction_name} ({yaw}°) เพื่อตรวจจับสีแดง")
         
-        gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480)
         time.sleep(0.3)  # รอให้กล้องเสถียร
         
         found_red = detect_red(ep_camera, threshold_area=100, attempts=5)
@@ -1863,7 +1863,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
     if not red_angles:
         print("\n❌ ไม่เจอสีแดงในทิศทางใดเลย")
         # กลับไปตำแหน่งกลาง
-        gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
         chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         return results
 
@@ -1896,7 +1896,7 @@ def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_hand
 
     # กลับไปตำแหน่งกลาง
     print(f"\n🔄 กลับสู่ตำแหน่งกลาง...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
     
     # ปลดล็อคล้อ
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
@@ -1953,7 +1953,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     # ===== SCAN FRONT (0°) - ToF + Red Detection =====
     print("🔍 Scanning FRONT (0°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -1982,12 +1982,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if front_distance <= 19.0:
         move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
     # ===== SCAN LEFT (-90°) - ToF + Red Detection =====
     print("🔍 Scanning LEFT (-90°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -2016,12 +2016,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if left_distance < 15:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
 
     # ===== SCAN RIGHT (90°) - ToF + Red Detection =====
     print("🔍 Scanning RIGHT (90°) - ToF + Red Detection...")
-    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # ToF scan
@@ -2050,13 +2050,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if right_distance < 15:
         move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
-        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed)
         time.sleep(0.2)
 
         # ToF scan for back
@@ -2109,58 +2109,109 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print(f"\n🎯 === MARKER SCANNING (Red-filtered) ===")
         print(f"🔴 Found red in {len(red_directions)} directions: {[d[0] for d in red_directions]}")
         
+        # ตั้ง timeout ให้การตรวจ marker เร็วขึ้น
+        try:
+            marker_handler.detection_timeout = 0.8
+        except Exception:
+            pass
+        
+        per_direction_timeout_sec = 2.0
+        
         for direction_name, angle in red_directions:
             print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
+            direction_start_ts = time.time()
             
-            # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
-            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-            time.sleep(0.3)
-            
-            # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
-            tof_handler.start_scanning('marker_scan')
-            sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-            time.sleep(0.15)
-            tof_handler.stop_scanning(sensor.unsub_distance)
-            
-            marker_distance = tof_handler.get_average_distance('marker_scan')
-            print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
-            
-            # ตรวจ marker
-            marker_ids = []
-            if marker_distance > 0 and marker_distance <= 40.0:
-                print("   ✅ Distance OK - Scanning for markers...")
-                marker_handler.reset_detection()
-                detected = marker_handler.wait_for_markers(timeout=1.0)
+            try:
+                # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
+                gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
+                time.sleep(0.3)
                 
-                if detected and marker_handler.markers:
-                    marker_ids = [m.id for m in marker_handler.markers]
-                    print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                # ตรวจ timeout เฟสหมุน
+                if (time.time() - direction_start_ts) > per_direction_timeout_sec:
+                    print(f"⚠️ Timeout while positioning gimbal for {direction_name} - skipping")
+                    continue
+                
+                # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
+                tof_handler.start_scanning('marker_scan')
+                sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+                time.sleep(0.15)
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
+                marker_distance = tof_handler.get_average_distance('marker_scan')
+                print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
+                
+                # ตรวจ timeout เฟส ToF
+                if (time.time() - direction_start_ts) > per_direction_timeout_sec:
+                    print(f"⚠️ Timeout after distance read for {direction_name} - skipping marker detect")
+                    current_node.markerScanResults[direction_name] = {
+                        'marker_ids': [],
+                        'distance': marker_distance,
+                        'direction_name': direction_name,
+                        'angle': angle,
+                        'compass_direction': get_compass_direction(angle),
+                        'timestamp': datetime.now().isoformat(),
+                        'found_red': True,
+                        'reason': 'timeout_after_distance'
+                    }
+                    continue
+                
+                # ตรวจ marker
+                marker_ids = []
+                if marker_distance > 0 and marker_distance <= 40.0:
+                    print("   ✅ Distance OK - Scanning for markers...")
+                    marker_handler.reset_detection()
+                    detected = marker_handler.wait_for_markers(timeout=marker_handler.detection_timeout)
+                    
+                    if detected and marker_handler.markers:
+                        marker_ids = [m.id for m in marker_handler.markers]
+                        print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                    else:
+                        print(f"   ❌ No markers found")
                 else:
-                    print(f"   ❌ No markers found")
-            else:
-                print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                    print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                
+                # เก็บผลลัพธ์
+                current_node.markerScanResults[direction_name] = {
+                    'marker_ids': marker_ids,
+                    'distance': marker_distance,
+                    'direction_name': direction_name,
+                    'angle': angle,
+                    'compass_direction': get_compass_direction(angle),
+                    'timestamp': datetime.now().isoformat(),
+                    'found_red': True
+                }
+                
+                if marker_ids:
+                    current_node.markersFound[direction_name] = marker_ids
+                    current_node.hasMarkers = True
+                    print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
             
-            # เก็บผลลัพธ์
-            current_node.markerScanResults[direction_name] = {
-                'marker_ids': marker_ids,
-                'distance': marker_distance,
-                'direction_name': direction_name,
-                'angle': angle,
-                'compass_direction': get_compass_direction(angle),
-                'timestamp': datetime.now().isoformat(),
-                'found_red': True
-            }
+            except Exception as e:
+                print(f"❌ Error during marker scanning at {direction_name}: {e}")
+                try:
+                    tof_handler.stop_scanning(sensor.unsub_distance)
+                except Exception:
+                    pass
+                current_node.markerScanResults[direction_name] = {
+                    'marker_ids': [],
+                    'distance': 0.0,
+                    'direction_name': direction_name,
+                    'angle': angle,
+                    'compass_direction': get_compass_direction(angle),
+                    'timestamp': datetime.now().isoformat(),
+                    'found_red': True,
+                    'reason': 'exception'
+                }
+                continue
             
-            if marker_ids:
-                current_node.markersFound[direction_name] = marker_ids
-                current_node.hasMarkers = True
-                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
+            # เฟรมเว้นเพื่อความเสถียรระหว่างทิศ
+            time.sleep(0.1)
     
     elif marker_handler:
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
     
     # Return to center
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # Unlock wheels
