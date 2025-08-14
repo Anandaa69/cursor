@@ -34,6 +34,7 @@ import cv2
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
+CAMERA_STREAM_ACTIVE = False
 
 # ===== Marker Detection Classes =====
 class MarkerInfo:
@@ -1944,8 +1945,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if marker_handler and ep_robot:
         try:
             ep_camera = ep_robot.camera
-            ep_camera.start_video_stream(display=False, resolution="720p")
-            print("📹 Video stream started for red color detection")
+            global CAMERA_STREAM_ACTIVE
+            if not CAMERA_STREAM_ACTIVE:
+                ep_camera.start_video_stream(display=False, resolution="720p")
+                CAMERA_STREAM_ACTIVE = True
+                print("📹 Video stream started for red color detection")
             time.sleep(0.5)  # รอให้ camera เสถียร
         except Exception as e:
             print(f"⚠️ Cannot start video stream for red detection: {e}")
@@ -2042,6 +2046,10 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
 
+    # If right is too close, avoid lateral shift while video is active to prevent long blocking
+    if right_distance < 19:
+        print(f"⚠️ RIGHT very close ({right_distance:.2f}cm). Skipping lateral shift to avoid camera/sensor contention.")
+
     print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
     # Red detection at RIGHT
@@ -2111,10 +2119,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     # ===== ปิด Video Stream =====
     if ep_camera:
         try:
-            ep_camera.stop_video_stream()
-            print("📹 Video stream stopped")
-        except:
-            pass
+            global CAMERA_STREAM_ACTIVE
+            if CAMERA_STREAM_ACTIVE:
+                ep_camera.stop_video_stream()
+                CAMERA_STREAM_ACTIVE = False
+                print("📹 Video stream stopped")
+        except Exception as e:
+            print(f"⚠️ Error stopping camera stream: {e}")
 
     # ===== MARKER SCANNING - เฉพาะทิศทางที่เจอสีแดง =====
     if marker_handler and red_directions:
