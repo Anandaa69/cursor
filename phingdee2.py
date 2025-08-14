@@ -31,6 +31,9 @@ from datetime import datetime
 import json
 from collections import deque
 import cv2
+import threading
+import signal
+import sys
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
@@ -830,11 +833,15 @@ class GraphMapper:
                     target_x, target_y = target_pos
                     target_node_id = self.get_node_id(target_pos)
 
-                    # === ✅ แก้ไขการเช็ค outer border ===
-                    is_outer_boundary = (
-                        target_x < self.min_x or target_x > self.max_x or
-                        target_y < self.min_y or target_y > self.max_y
-                    )
+                                         # === ✅ แก้ไขการเช็ค outer border ===
+                     is_outer_boundary = (
+                         target_x < self.min_x or target_x > self.max_x or
+                         target_y < self.min_y or target_y > self.max_y
+                     )
+                     
+                     # Additional debugging for boundary conditions
+                     if is_outer_boundary:
+                         print(f"      🌐 Boundary check: {target_pos} outside [{self.min_x},{self.max_x}] x [{self.min_y},{self.max_y}]")
 
                     # เช็ค wall / explored / target exist
                     is_blocked = node.walls.get(direction, True)
@@ -2050,15 +2057,43 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    # Red detection at RIGHT
-    if ep_camera and right_distance > 0 and right_distance <= 40.0:
-        print("🔴 Checking for red color at RIGHT...")
-        found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
-        if found_red:
-            print("✅ RED DETECTED at RIGHT!")
-            red_directions.append(('right', 90))
+    # Check if RIGHT direction leads out of bounds
+    current_pos = graph_mapper.currentPosition
+    current_dir = graph_mapper.currentDirection
+    if current_dir == 'south':
+        right_target = (current_pos[0] - 1, current_pos[1])  # west
+    elif current_dir == 'north':
+        right_target = (current_pos[0] + 1, current_pos[1])  # east
+    elif current_dir == 'east':
+        right_target = (current_pos[0], current_pos[1] - 1)  # south
+    elif current_dir == 'west':
+        right_target = (current_pos[0], current_pos[1] + 1)  # north
+    
+    is_right_out_of_bounds = (
+        right_target[0] < graph_mapper.min_x or right_target[0] > graph_mapper.max_x or
+        right_target[1] < graph_mapper.min_y or right_target[1] > graph_mapper.max_y
+    )
+    
+    if is_right_out_of_bounds and not right_wall:
+        print(f"🌐 WARNING: RIGHT leads to out-of-bounds {right_target}")
+    
+    # Red detection at RIGHT with boundary check
+    try:
+        if ep_camera and right_distance > 0 and right_distance <= 40.0:
+            print("🔴 Checking for red color at RIGHT...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at RIGHT!")
+                red_directions.append(('right', 90))
+            else:
+                print("❌ No red at RIGHT")
         else:
-            print("❌ No red at RIGHT")
+            if right_distance > 40.0:
+                print("🔍 RIGHT distance too far for red detection")
+            else:
+                print("🔍 Skipping RIGHT red detection (invalid conditions)")
+    except Exception as e:
+        print(f"⚠️ Error in RIGHT red detection: {e}")
 
     # Position adjustment if too close
     if right_distance < 15:
@@ -2110,13 +2145,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
             current_node.unexploredExits.remove(back_abs_dir)
             print(f"🧹 Removed BACK ({back_abs_dir}) from unexplored exits at start node")
 
-    # ===== ปิด Video Stream =====
+    # ===== ปิด Video Stream with enhanced debugging =====
+    print("🔄 Preparing to stop video stream...")
     if ep_camera:
         try:
+            print("📹 Stopping video stream...")
             ep_camera.stop_video_stream()
-            print("📹 Video stream stopped")
+            print("📹 Video stream stopped successfully")
         except Exception as e:
             print(f"⚠️ Error stopping video stream: {e}")
+    else:
+        print("📹 No video stream to stop (ep_camera is None)")
+    
+    print("✅ Video stream section completed")
 
     # ===== MARKER SCANNING - เฉพาะทิศทางที่เจอสีแดง =====
     if marker_handler and red_directions:
@@ -2262,8 +2303,15 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     # Update graph with wall information using ABSOLUTE directions
     try:
         print(f"🔄 Updating node walls and unexplored exits...")
-        graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
+        print(f"   📍 Position: {graph_mapper.currentPosition}")
+        print(f"   🧭 Facing: {graph_mapper.currentDirection}")
+        print(f"   🧱 Wall data: Left={left_wall}, Right={right_wall}, Front={front_wall}")
+        
+        # Use timeout protection for boundary processing
+        with_timeout(graph_mapper.update_current_node_walls_absolute, 10, left_wall, right_wall, front_wall)
         current_node.sensorReadings = scan_results
+        
+        print(f"✅ Wall update completed successfully")
         
         print(f"✅ Node {current_node.id} scan complete:")
         print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
@@ -2707,3 +2755,41 @@ if __name__ == '__main__':
             pass
         ep_robot.close()
         print("🔌 Connection closed")
+
+# ===== Timeout Handler for Preventing Hangs =====
+class TimeoutHandler:
+    def __init__(self, timeout_seconds=30):
+        self.timeout_seconds = timeout_seconds
+        self.timer = None
+        
+    def timeout_callback(self):
+        print(f"🚨 TIMEOUT: Operation took longer than {self.timeout_seconds} seconds!")
+        print(f"🛑 Force terminating to prevent hang...")
+        # Don't actually exit, just print warning
+        
+    def start_timeout(self):
+        if self.timer:
+            self.timer.cancel()
+        self.timer = threading.Timer(self.timeout_seconds, self.timeout_callback)
+        self.timer.start()
+        
+    def cancel_timeout(self):
+        if self.timer:
+            self.timer.cancel()
+            self.timer = None
+
+def with_timeout(func, timeout_seconds=15, *args, **kwargs):
+    """Execute function with timeout protection"""
+    timeout_handler = TimeoutHandler(timeout_seconds)
+    
+    try:
+        print(f"⏱️ Starting operation with {timeout_seconds}s timeout...")
+        timeout_handler.start_timeout()
+        result = func(*args, **kwargs)
+        timeout_handler.cancel_timeout()
+        print(f"✅ Operation completed within timeout")
+        return result
+    except Exception as e:
+        timeout_handler.cancel_timeout()
+        print(f"❌ Operation failed: {e}")
+        raise e
