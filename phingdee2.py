@@ -2112,49 +2112,77 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         for direction_name, angle in red_directions:
             print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
             
-            # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
-            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-            time.sleep(0.3)
+            # NEW: Sweep around the main angle with diagonal offsets to cover more area
+            sweep_offsets = [0, -15, 15]
+            all_marker_ids = set()
+            angle_details = []
+            center_distance = None
+            nearest_marker_distance = None
             
-            # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
-            tof_handler.start_scanning('marker_scan')
-            sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-            time.sleep(0.15)
-            tof_handler.stop_scanning(sensor.unsub_distance)
-            
-            marker_distance = tof_handler.get_average_distance('marker_scan')
-            print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
-            
-            # ตรวจ marker
-            marker_ids = []
-            if marker_distance > 0 and marker_distance <= 40.0:
-                print("   ✅ Distance OK - Scanning for markers...")
-                marker_handler.reset_detection()
-                detected = marker_handler.wait_for_markers(timeout=1.0)
+            for offset in sweep_offsets:
+                sweep_angle = angle + offset
+                print(f"   🔄 Rotating to {sweep_angle}° (offset {offset:+}°) and tilting...")
+                gimbal.moveto(pitch=-20, yaw=sweep_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+                time.sleep(0.3)
                 
-                if detected and marker_handler.markers:
-                    marker_ids = [m.id for m in marker_handler.markers]
-                    print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                # วัดระยะทางใหม่สำหรับมุมนี้
+                tof_handler.start_scanning('marker_scan')
+                sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+                time.sleep(0.15)
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
+                marker_distance = tof_handler.get_average_distance('marker_scan')
+                print(f"   📐 Marker scan distance (tilted) at {sweep_angle}°: {marker_distance:.2f}cm")
+                
+                if offset == 0:
+                    center_distance = marker_distance
+                
+                ids_at_angle = []
+                if marker_distance > 0 and marker_distance <= 40.0:
+                    print("   ✅ Distance OK - Scanning for markers...")
+                    marker_handler.reset_detection()
+                    detected = marker_handler.wait_for_markers(timeout=1.0)
+                    
+                    if detected and marker_handler.markers:
+                        ids_at_angle = [m.id for m in marker_handler.markers]
+                        for mid in ids_at_angle:
+                            all_marker_ids.add(mid)
+                        print(f"   🎯 FOUND MARKERS at {sweep_angle}°: {ids_at_angle}")
+                        if nearest_marker_distance is None or (marker_distance > 0 and marker_distance < nearest_marker_distance):
+                            nearest_marker_distance = marker_distance
+                    else:
+                        print(f"   ❌ No markers found at {sweep_angle}°")
                 else:
-                    print(f"   ❌ No markers found")
-            else:
-                print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                    print(f"   ❌ Distance not suitable for marker detection at {sweep_angle}°: {marker_distance:.2f}cm")
+                
+                angle_details.append({
+                    'angle': sweep_angle,
+                    'offset': offset,
+                    'marker_ids': ids_at_angle,
+                    'distance': marker_distance,
+                    'compass_direction': get_compass_direction(sweep_angle)
+                })
             
-            # เก็บผลลัพธ์
+            # สรุปผลรวมสำหรับด้านนี้
+            aggregated_ids = sorted(list(all_marker_ids))
+            stored_distance = nearest_marker_distance if nearest_marker_distance is not None else (center_distance if center_distance is not None else 0.0)
+            
             current_node.markerScanResults[direction_name] = {
-                'marker_ids': marker_ids,
-                'distance': marker_distance,
+                'marker_ids': aggregated_ids,
+                'distance': stored_distance,
                 'direction_name': direction_name,
                 'angle': angle,
+                'sweep_offsets': sweep_offsets,
+                'angle_details': angle_details,
                 'compass_direction': get_compass_direction(angle),
                 'timestamp': datetime.now().isoformat(),
                 'found_red': True
             }
             
-            if marker_ids:
-                current_node.markersFound[direction_name] = marker_ids
+            if aggregated_ids:
+                current_node.markersFound[direction_name] = aggregated_ids
                 current_node.hasMarkers = True
-                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
+                print(f"   ✅ Stored markers for {direction_name}: {aggregated_ids}")
     
     elif marker_handler:
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
