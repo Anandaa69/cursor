@@ -31,9 +31,6 @@ from datetime import datetime
 import json
 from collections import deque
 import cv2
-import threading
-import signal
-import sys
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
@@ -738,8 +735,7 @@ class GraphMapper:
 
         # Override methods เพื่อใช้ priority-based exploration
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
-        # ✅ KEEP the absolute version for proper boundary checking
-        # self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+        self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
 
     # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
     def is_position_within_boundaries(self, position):
@@ -813,113 +809,86 @@ class GraphMapper:
     # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
     def update_unexplored_exits_absolute(self, node):
         """Update unexplored exits using ABSOLUTE directions + outer border check"""
-        try:
-            node.unexploredExits = []
-            node.outOfBoundsExits = []
-            node.outOfBoundsCount = 0
+        node.unexploredExits = []
+        node.outOfBoundsExits = []
+        node.outOfBoundsCount = 0
 
-            x, y = node.position
-            
-            possible_directions = {
-                'north': (x, y + 1),
-                'south': (x, y - 1),
-                'east':  (x + 1, y),
-                'west':  (x - 1, y)
-            }
+        x, y = node.position
 
-            print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-            print(f"🔍 Wall status: {node.walls}")
-            print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+        possible_directions = {
+            'north': (x, y + 1),
+            'south': (x, y - 1),
+            'east':  (x + 1, y),
+            'west':  (x - 1, y)
+        }
 
-            for direction, (target_x, target_y) in possible_directions.items():
-                try:
-                    target_node_id = self.get_node_id((target_x, target_y))
-                    
-                    # Check if target is outside map boundaries
-                    is_outer_boundary = (
-                        target_x < self.min_x or target_x > self.max_x or
-                        target_y < self.min_y or target_y > self.max_y
-                    )
-                    
-                    # Additional debugging for boundary conditions
-                    if is_outer_boundary:
-                        print(f"      🌐 Boundary check: {(target_x, target_y)} outside [{self.min_x},{self.max_x}] x [{self.min_y},{self.max_y}]")
+        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
+        print(f"🔍 Wall status: {node.walls}")
+        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
 
-                                # เช็ค wall / explored / target exist
-                    is_blocked = node.walls.get(direction, True)
-                    already_explored = direction in node.exploredDirections
-                    target_exists = target_node_id in self.nodes
-                    target_fully_explored = False
-                    target_has_unexplored_exits = False
-                    
-                    if target_exists:
-                        target_node = self.nodes[target_node_id]
-                        target_fully_explored = target_node.fullyScanned
-                        # ✅ NEW: Check if target node still has unexplored exits
-                        target_has_unexplored_exits = len(target_node.unexploredExits) > 0
+        for direction, target_pos in possible_directions.items():
+            target_x, target_y = target_pos
+            target_node_id = self.get_node_id(target_pos)
 
-                    print(f"   🔍 Direction {direction}:")
-                    print(f"      🚧 Blocked: {is_blocked}")
-                    print(f"      ✅ Already explored: {already_explored}")
-                    print(f"      🗃️  Target exists: {target_exists}")
-                    print(f"      🔍 Target fully explored: {target_fully_explored}")
-                    print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
-                    print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+            # === ✅ แก้ไขการเช็ค outer border ===
+            is_outer_boundary = (
+                target_x < self.min_x or target_x > self.max_x or
+                target_y < self.min_y or target_y > self.max_y
+            )
 
-                    # ✅ FIXED: More flexible exploration logic
-                    should_explore = (
-                        not is_blocked and
-                        not already_explored and
-                        (not target_exists or not target_fully_explored or target_has_unexplored_exits)
-                    )
+            # เช็ค wall / explored / target exist
+            is_blocked = node.walls.get(direction, True)
+            already_explored = direction in node.exploredDirections
+            target_exists = target_node_id in self.nodes
+            target_fully_explored = False
+            if target_exists:
+                target_node = self.nodes[target_node_id]
+                target_fully_explored = target_node.fullyScanned
 
-                    if should_explore:
-                        if is_outer_boundary:
-                            node.outOfBoundsExits.append(direction)
-                            node.outOfBoundsCount = len(node.outOfBoundsExits)
-                            print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
-                        else:
-                            node.unexploredExits.append(direction)
-                            print(f"      ✅ ADDED to unexplored exits!")
-                    else:
-                        print(f"      ❌ NOT added to unexplored exits")
+            print(f"   🔍 Direction {direction}:")
+            print(f"      🚧 Blocked: {is_blocked}")
+            print(f"      ✅ Already explored: {already_explored}")
+            print(f"      🗃️  Target exists: {target_exists}")
+            print(f"      🔍 Target fully explored: {target_fully_explored}")
+            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
 
-                except Exception as e:
-                    print(f"      ❌ Error processing direction {direction}: {e}")
-                    continue
+            should_explore = (
+                not is_blocked and
+                not already_explored and
+                (not target_exists or not target_fully_explored)
+            )
 
-            print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-            print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
+            if should_explore:
+                if is_outer_boundary:
+                    node.outOfBoundsExits.append(direction)
+                    node.outOfBoundsCount = len(node.outOfBoundsExits)
+                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                else:
+                    node.unexploredExits.append(direction)
+                    print(f"      ✅ ADDED to unexplored exits!")
+            else:
+                print(f"      ❌ NOT added to unexplored exits")
 
-            # Frontier queue update with error handling
-            try:
-                has_unexplored = len(node.unexploredExits) > 0
-                if has_unexplored and node.id not in self.frontierQueue:
-                    self.frontierQueue.append(node.id)
-                    print(f"🚀 Added {node.id} to frontier queue")
-                elif not has_unexplored and node.id in self.frontierQueue:
-                    self.frontierQueue.remove(node.id)
-                    print(f"🧹 Removed {node.id} from frontier queue")
+        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
+        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
 
-                # Dead end detection
-                blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-                node.isDeadEnd = blocked_count >= 3
-                if node.isDeadEnd:
-                    print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
-                    if node.id in self.frontierQueue:
-                        self.frontierQueue.remove(node.id)
-                        print(f"🧹 Removed dead end {node.id} from frontier queue")
-            except Exception as e:
-                print(f"❌ Error updating frontier queue: {e}")
-                
-        except Exception as e:
-            print(f"❌ Critical error in update_unexplored_exits_absolute: {e}")
-            # Ensure node has at least empty lists to prevent crashes
-            if not hasattr(node, 'unexploredExits'):
-                node.unexploredExits = []
-            if not hasattr(node, 'outOfBoundsExits'):
-                node.outOfBoundsExits = []
-                node.outOfBoundsCount = 0
+        # Frontier queue update
+        has_unexplored = len(node.unexploredExits) > 0
+        if has_unexplored and node.id not in self.frontierQueue:
+            self.frontierQueue.append(node.id)
+            print(f"🚀 Added {node.id} to frontier queue")
+        elif not has_unexplored and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
+            print(f"🧹 Removed {node.id} from frontier queue")
+
+        # Dead end detection
+        blocked_count = sum(1 for blocked in node.walls.values() if blocked)
+        node.isDeadEnd = blocked_count >= 3
+        if node.isDeadEnd:
+            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🧹 Removed dead end {node.id} from frontier queue")
 
 
     
@@ -1119,16 +1088,15 @@ class GraphMapper:
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
         
-        # ✅ FIXED: Don't mark direction as explored immediately
-        # Only remove from unexplored exits when we actually move
+        # Mark this direction as explored from the previous node
         if hasattr(self, 'previous_node') and self.previous_node:
-            # Remove from unexplored exits since we're moving in this direction
+            if target_direction not in self.previous_node.exploredDirections:
+                self.previous_node.exploredDirections.append(target_direction)
+            
+            # Remove from unexplored exits
             if target_direction in self.previous_node.unexploredExits:
                 self.previous_node.unexploredExits.remove(target_direction)
                 print(f"🔄 Removed {target_direction} from unexplored exits of {self.previous_node.id}")
-            
-            # ✅ NEW: Mark as explored only after we scan the target node
-            # This will be done in the main exploration loop after scanning
         
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
@@ -1251,25 +1219,19 @@ class GraphMapper:
             already_explored = absolute_dir in node.exploredDirections
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
-            target_has_unexplored_exits = False
-            
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-                # ✅ NEW: Check if target node still has unexplored exits
-                target_has_unexplored_exits = len(target_node.unexploredExits) > 0
             
             print(f"   📍 {relative_dir} ({absolute_dir}):")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
             print(f"      🏗️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
-            print(f"      🎯 Target has unexplored exits: {target_has_unexplored_exits}")
             
-            # ✅ FIXED: More flexible exploration logic
             should_explore = (not is_blocked and 
                             not already_explored and 
-                            (not target_exists or not target_fully_explored or target_has_unexplored_exits))
+                            (not target_exists or not target_fully_explored))
             
             if should_explore:
                 node.unexploredExits.append(absolute_dir)
@@ -1462,15 +1424,14 @@ class GraphMapper:
                 if target_exists:
                     target_node = self.nodes[target_node_id]
                     target_fully_explored = target_node.fullyScanned
-                    target_has_unexplored = len(target_node.unexploredExits) > 0
-                    print(f"      🎯 {exit_direction} -> {target_pos}: exists={target_exists}, fully_explored={target_fully_explored}, has_unexplored={target_has_unexplored}")
+                    print(f"      🎯 {exit_direction} -> {target_pos}: exists={target_exists}, fully_explored={target_fully_explored}")
                     
-                    # ✅ FIXED: More flexible validation - consider valid if target doesn't exist, isn't fully explored, OR still has unexplored exits
-                    if not target_fully_explored or target_has_unexplored:
+                    # Only consider it unexplored if target doesn't exist or isn't fully explored
+                    if not target_fully_explored:
                         valid_exits.append(exit_direction)
                         print(f"         ✅ Still valid for exploration")
                     else:
-                        print(f"         ❌ Target fully explored with no unexplored exits")
+                        print(f"         ❌ Target already fully explored")
                 else:
                     valid_exits.append(exit_direction)
                     print(f"      🎯 {exit_direction} -> {target_pos}: NEW AREA - valid for exploration")
@@ -1558,13 +1519,11 @@ class GraphMapper:
                     target_exists = target_node_id in self.nodes
                     if target_exists:
                         target_node = self.nodes[target_node_id]
-                        target_has_unexplored = len(target_node.unexploredExits) > 0
-                        # ✅ FIXED: More flexible validation
-                        if not target_node.fullyScanned or target_has_unexplored:
+                        if not target_node.fullyScanned:
                             valid_exits.append(exit_direction)
-                            print(f"      ✅ {exit_direction} -> {target_pos}: Target not fully explored or has unexplored exits")
+                            print(f"      ✅ {exit_direction} -> {target_pos}: Target not fully explored")
                         else:
-                            print(f"      ❌ {exit_direction} -> {target_pos}: Target fully explored with no unexplored exits")
+                            print(f"      ❌ {exit_direction} -> {target_pos}: Target already fully explored")
                     else:
                         valid_exits.append(exit_direction)
                         print(f"      ✅ {exit_direction} -> {target_pos}: NEW AREA")
@@ -2056,44 +2015,44 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         except Exception as e:
             print(f"⚠️ Cannot start video stream for red detection: {e}")
             ep_camera = None
-
+    
     # ===== SCAN FRONT (0°) - ToF + Red Detection =====
     print("🔍 Scanning FRONT (0°) - ToF + Red Detection...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-     
-     # ตรวจสอบว่าทิศทางหน้าอยู่นอกขอบเขตแมพหรือไม่
-     front_target_pos = graph_mapper.get_next_position(graph_mapper.currentDirection)
-     
-     if not graph_mapper.is_position_within_boundaries(front_target_pos):
-         print(f"🚫 FRONT direction leads to {front_target_pos} which is OUTSIDE map boundaries!")
-         print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
-         # จำลองการเจอกำแพงที่ขอบแมพ
-         front_distance = 30.0  # ระยะปลอม
-         front_wall = True      # บังคับให้เป็นกำแพง
-         scan_results['front'] = front_distance
-         print(f"📏 FRONT ToF result: {front_distance:.2f}cm - WALL (BOUNDARY)")
-     else:
-         # ToF scan ปกติ
-         tof_handler.start_scanning('front')
-         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-         time.sleep(0.2)
-         tof_handler.stop_scanning(sensor.unsub_distance)
-         
-         front_distance = tof_handler.get_average_distance('front')
-         front_wall = tof_handler.is_wall_detected('front')
-         scan_results['front'] = front_distance
-         
-         print(f"📏 FRONT ToF result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-         
-         # Red detection at FRONT
-         if ep_camera and front_distance > 0 and front_distance <= 40.0:
-             print("🔴 Checking for red color at FRONT...")
-             found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
-             if found_red:
-                 print("✅ RED DETECTED at FRONT!")
-                 red_directions.append(('front', 0))
-             else:
+    
+    # ตรวจสอบว่าทิศทางหน้าอยู่นอกขอบเขตแมพหรือไม่
+    front_target_pos = graph_mapper.get_next_position(graph_mapper.currentDirection)
+    
+    if not graph_mapper.is_position_within_boundaries(front_target_pos):
+        print(f"🚫 FRONT direction leads to {front_target_pos} which is OUTSIDE map boundaries!")
+        print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
+        # จำลองการเจอกำแพงที่ขอบแมพ
+        front_distance = 30.0  # ระยะปลอม
+        front_wall = True      # บังคับให้เป็นกำแพง
+        scan_results['front'] = front_distance
+        print(f"📏 FRONT ToF result: {front_distance:.2f}cm - WALL (BOUNDARY)")
+    else:
+        # ToF scan ปกติ
+        tof_handler.start_scanning('front')
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        front_distance = tof_handler.get_average_distance('front')
+        front_wall = tof_handler.is_wall_detected('front')
+        scan_results['front'] = front_distance
+        
+        print(f"📏 FRONT ToF result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
+        
+        # Red detection at FRONT
+        if ep_camera and front_distance > 0 and front_distance <= 40.0:
+            print("🔴 Checking for red color at FRONT...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at FRONT!")
+                red_directions.append(('front', 0))
+                         else:
                  print("❌ No red at FRONT")
 
          # Position adjustment if too close
@@ -2161,18 +2120,26 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
     
-    # Check if RIGHT is outside map boundaries
-    right_direction_map = {'north': 'east', 'south': 'west', 'east': 'south', 'west': 'north'}
-    right_abs_dir = right_direction_map[graph_mapper.currentDirection]
-    right_target_pos = graph_mapper.get_next_position(right_abs_dir)
+    # ตรวจสอบว่าทิศทางขวาอยู่นอกขอบเขตแมพหรือไม่
+    right_direction_map = {
+        'north': 'east',
+        'south': 'west', 
+        'east': 'south',
+        'west': 'north'
+    }
+    right_absolute_direction = right_direction_map[graph_mapper.currentDirection]
+    right_target_pos = graph_mapper.get_next_position(right_absolute_direction)
     
     if not graph_mapper.is_position_within_boundaries(right_target_pos):
-        print(f"🚫 RIGHT leads to {right_target_pos} OUTSIDE boundaries!")
-        right_distance, right_wall = 30.0, True
+        print(f"🚫 RIGHT direction leads to {right_target_pos} which is OUTSIDE map boundaries!")
+        print(f"🗺️ Map boundaries: x[{graph_mapper.min_x},{graph_mapper.max_x}], y[{graph_mapper.min_y},{graph_mapper.max_y}]")
+        # จำลองการเจอกำแพงที่ขอบแมพ
+        right_distance = 30.0  # ระยะปลอม
+        right_wall = True      # บังคับให้เป็นกำแพง
         scan_results['right'] = right_distance
-        print(f"📏 RIGHT: {right_distance:.2f}cm - WALL (BOUNDARY)")
+        print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - WALL (BOUNDARY)")
     else:
-        # Normal scan
+        # ToF scan ปกติ
         tof_handler.start_scanning('right')
         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
         time.sleep(0.2)
@@ -2181,16 +2148,25 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         right_distance = tof_handler.get_average_distance('right')
         right_wall = tof_handler.is_wall_detected('right')
         scan_results['right'] = right_distance
-        print(f"📏 RIGHT: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+
+        print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
         
+        # Red detection at RIGHT
         if ep_camera and right_distance > 0 and right_distance <= 40.0:
-            print("🔴 Checking red at RIGHT...")
-            if detect_red(ep_camera, threshold_area=100, attempts=3):
-                print("✅ RED at RIGHT!")
+            print("🔴 Checking for red color at RIGHT...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at RIGHT!")
                 red_directions.append(('right', 90))
             else:
                 print("❌ No red at RIGHT")
 
+                 # Position adjustment if too close
+         if right_distance < 15:
+             move_distance = -(21 - right_distance)
+             print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
+             chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+             time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
@@ -2356,22 +2332,8 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     time.sleep(0.2)
     
     # Update graph with wall information using ABSOLUTE directions
-    try:
-        print(f"🔄 Updating node walls and unexplored exits...")
-        print(f"   📍 Position: {graph_mapper.currentPosition}")
-        print(f"   🧭 Facing: {graph_mapper.currentDirection}")
-        print(f"   🧱 Wall data: Left={left_wall}, Right={right_wall}, Front={front_wall}")
-        
-        # ✅ NEW: Use timeout protection for boundary processing
-        with_timeout(graph_mapper.update_current_node_walls_absolute, 10, left_wall, right_wall, front_wall)
-        current_node.sensorReadings = scan_results
-        
-        print(f"✅ Wall update completed successfully")
-    except Exception as e:
-        print(f"❌ Error updating node information: {e}")
-        print("⚠️ Continuing with default wall configuration...")
-        # Set safe defaults
-        current_node.sensorReadings = scan_results
+    graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
+    current_node.sensorReadings = scan_results
     
     print(f"✅ Node {current_node.id} scan complete:")
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
@@ -2431,39 +2393,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         if not current_node.fullyScanned:
             print("🔍 NEW NODE - Performing full scan...")
-            try:
-                # ✅ NEW: Add timeout protection for scanning
-                scan_results = with_timeout(scan_current_node_absolute, 30, gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler, ep_robot)
-                scanning_iterations += 1
-            except Exception as e:
-                print(f"❌ Error during node scanning: {e}")
-                print("⚠️ Continuing with cached data or default values...")
-                scan_results = {}
-            
-            # ✅ NEW: Mark the direction as explored from previous node after successful scan
-            if hasattr(graph_mapper, 'previous_node') and graph_mapper.previous_node:
-                # Find the direction we came from
-                prev_pos = graph_mapper.previous_node.position
-                curr_pos = current_node.position
-                
-                # Calculate the direction from previous to current
-                dx = curr_pos[0] - prev_pos[0]
-                dy = curr_pos[1] - prev_pos[1]
-                
-                if dx == 1 and dy == 0:
-                    came_from_direction = 'east'
-                elif dx == -1 and dy == 0:
-                    came_from_direction = 'west'
-                elif dx == 0 and dy == 1:
-                    came_from_direction = 'north'
-                elif dx == 0 and dy == -1:
-                    came_from_direction = 'south'
-                else:
-                    came_from_direction = None
-                
-                if came_from_direction and came_from_direction not in graph_mapper.previous_node.exploredDirections:
-                    graph_mapper.previous_node.exploredDirections.append(came_from_direction)
-                    print(f"✅ Marked {came_from_direction} as explored from {graph_mapper.previous_node.id} after scanning")
+            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler, ep_robot)
+            scanning_iterations += 1
             
             # Check if this scan revealed a dead end
             if graph_mapper.is_dead_end(current_node):
@@ -2525,44 +2456,39 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 continue
         
         # STEP 2: Backtracking logic
-        print(f"🔍 No unexplored directions from current node - initiating backtracking...")
         backtrack_attempts += 1
         
-        try:
-            frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
+        frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
+        
+        if frontier_id and path is not None and frontier_direction:
+            print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
+            print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
+            print("🔙 REVERSE BACKTRACK: Using reverse movements WITH drift correction!")
             
-            if frontier_id and path is not None and frontier_direction:
-                print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
-                print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
-                print("🔙 REVERSE BACKTRACK: Using reverse movements WITH drift correction!")
+            try:
+                # *** เปลี่ยนการเรียกใช้ให้ส่ง attitude_handler ไปด้วย ***
+                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler)
                 
-                try:
-                    # *** เปลี่ยนการเรียกใช้ให้ส่ง attitude_handler ไปด้วย ***
-                    success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler)
+                if success:
+                    reverse_backtracks += 1
+                    print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
+                    print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
                     
-                    if success:
-                        reverse_backtracks += 1
-                        print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
-                        print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
-                        
-                        # แสดงสถานะ drift correction หลัง backtrack
-                        updated_drift_status = movement_controller.get_drift_correction_status()
-                        print(f"   🔧 Total nodes after backtrack: {updated_drift_status['nodes_visited']}")
-                        print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
-                        
-                        time.sleep(0.2)
-                        continue
-                        
-                    else:
-                        print(f"❌ Failed to execute reverse backtracking path!")
-                        break
-                        
-                except Exception as e:
-                    print(f"❌ Error during reverse backtracking: {e}")
+                    # แสดงสถานะ drift correction หลัง backtrack
+                    updated_drift_status = movement_controller.get_drift_correction_status()
+                    print(f"   🔧 Total nodes after backtrack: {updated_drift_status['nodes_visited']}")
+                    print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
+                    
+                    time.sleep(0.2)
+                    continue
+                    
+                else:
+                    print(f"❌ Failed to execute reverse backtracking path!")
                     break
-        except Exception as e:
-            print(f"❌ Error finding frontier for backtracking: {e}")
-            print("⚠️ Continuing to completion check...")
+                    
+            except Exception as e:
+                print(f"❌ Error during reverse backtracking: {e}")
+                break
         else:
             # STEP 3: Final check
             frontier_rebuild_attempts += 1
@@ -2589,14 +2515,6 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 print("🎉 All nodes in boundary explored!")
                 # ทำความสะอาด frontier queue ขั้นสุดท้าย
                 graph_mapper.frontierQueue.clear()
-                break
-            
-            # ✅ NEW: Additional safety check from patch version - if we have any valid unexplored exits
-            total_unexplored = sum(len(node.unexploredExits) for node in graph_mapper.nodes.values())
-            print(f"📊 Total unexplored exits across all nodes: {total_unexplored}")
-            
-            if total_unexplored == 0:
-                print("🎉 No more unexplored exits found anywhere - exploration complete!")
                 break
             
             if graph_mapper.frontierQueue:
@@ -3108,40 +3026,3 @@ if __name__ == '__main__':
             pass
         ep_robot.close()
         print("🔌 Connection closed")
-
-# ===== Timeout Handler for Preventing Hangs =====
-class TimeoutHandler:
-    def __init__(self, timeout_seconds=30):
-        self.timeout_seconds = timeout_seconds
-        self.timer = None
-        
-    def timeout_callback(self):
-        print(f"⚠️ TIMEOUT WARNING: Operation exceeded {self.timeout_seconds} seconds!")
-        # Don't actually exit, just print warning
-        
-    def start_timeout(self):
-        if self.timer:
-            self.timer.cancel()
-        self.timer = threading.Timer(self.timeout_seconds, self.timeout_callback)
-        self.timer.start()
-        
-    def cancel_timeout(self):
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
-
-def with_timeout(func, timeout_seconds=15, *args, **kwargs):
-    """Execute function with timeout protection"""
-    timeout_handler = TimeoutHandler(timeout_seconds)
-    
-    try:
-        print(f"⏱️ Starting operation with {timeout_seconds}s timeout...")
-        timeout_handler.start_timeout()
-        result = func(*args, **kwargs)
-        timeout_handler.cancel_timeout()
-        print(f"✅ Operation completed successfully within timeout")
-        return result
-    except Exception as e:
-        timeout_handler.cancel_timeout()
-        print(f"❌ Operation failed: {e}")
-        raise e
