@@ -37,6 +37,7 @@ import sys
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
+CAMERA_STREAM_ACTIVE = False
 
 # ===== Marker Detection Classes =====
 class MarkerInfo:
@@ -1985,8 +1986,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     if marker_handler and ep_robot:
         try:
             ep_camera = ep_robot.camera
-            ep_camera.start_video_stream(display=False, resolution="720p")
-            print("📹 Video stream started for red color detection")
+            global CAMERA_STREAM_ACTIVE
+            if not CAMERA_STREAM_ACTIVE:
+                ep_camera.start_video_stream(display=False, resolution="720p")
+                CAMERA_STREAM_ACTIVE = True
+                print("📹 Video stream started for red color detection")
             time.sleep(0.5)  # รอให้ camera เสถียร
         except Exception as e:
             print(f"⚠️ Cannot start video stream for red detection: {e}")
@@ -2021,9 +2025,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if front_distance <= 19.0:
-        move_distance = -(23 - front_distance)
-        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        move_distance = -(23 - front_distance)  # cm, negative means move backward
+        move_m = move_distance / 100.0
+        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {abs(move_m):.2f}m")
+        try:
+            chassis.move(x=move_m, y=0, xy_speed=0.2).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ FRONT adjust move skipped: {e}")
         time.sleep(0.2)
 
     # ===== SCAN LEFT (-90°) - ToF + Red Detection =====
@@ -2055,9 +2063,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if left_distance < 15:
-        move_distance = 20 - left_distance
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        move_distance = 20 - left_distance  # cm
+        move_m = move_distance / 100.0
+        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Shifting right {move_m:.2f}m")
+        try:
+            chassis.move(x=0.01, y=move_m, xy_speed=0.5).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ LEFT adjust move skipped: {e}")
         time.sleep(0.3)
 
     # ===== SCAN RIGHT (90°) - ToF + Red Detection =====
@@ -2075,6 +2087,10 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
 
+    # If right is too close, avoid lateral shift while video is active to prevent long blocking
+    if right_distance < 19:
+        print(f"⚠️ RIGHT very close ({right_distance:.2f}cm). Skipping lateral shift to avoid camera/sensor contention.")
+
     print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
     # Red detection at RIGHT
@@ -2089,9 +2105,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     # Position adjustment if too close
     if right_distance < 15:
-        move_distance = -(21 - right_distance)
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        move_distance = -(21 - right_distance)  # cm, negative means shift left
+        move_m = move_distance / 100.0
+        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Shifting left {abs(move_m):.2f}m")
+        try:
+            chassis.move(x=0.01, y=move_m, xy_speed=0.5).wait_for_completed()
+        except Exception as e:
+            print(f"⚠️ RIGHT adjust move skipped: {e}")
         time.sleep(0.3)
 
     # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
@@ -2140,10 +2160,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     # ===== ปิด Video Stream =====
     if ep_camera:
         try:
-            ep_camera.stop_video_stream()
-            print("📹 Video stream stopped")
-        except:
-            pass
+            global CAMERA_STREAM_ACTIVE
+            if CAMERA_STREAM_ACTIVE:
+                ep_camera.stop_video_stream()
+                CAMERA_STREAM_ACTIVE = False
+                print("📹 Video stream stopped")
+        except Exception as e:
+            print(f"⚠️ Error stopping camera stream: {e}")
 
     # ===== MARKER SCANNING - เฉพาะทิศทางที่เจอสีแดง =====
     if marker_handler and red_directions:
@@ -2153,49 +2176,77 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         for direction_name, angle in red_directions:
             print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
             
-            # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
-            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-            time.sleep(0.3)
+            # NEW: Sweep around the main angle with diagonal offsets to cover more area
+            sweep_offsets = [0, -15, 15]
+            all_marker_ids = set()
+            angle_details = []
+            center_distance = None
+            nearest_marker_distance = None
             
-            # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
-            tof_handler.start_scanning('marker_scan')
-            sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-            time.sleep(0.15)
-            tof_handler.stop_scanning(sensor.unsub_distance)
-            
-            marker_distance = tof_handler.get_average_distance('marker_scan')
-            print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
-            
-            # ตรวจ marker
-            marker_ids = []
-            if marker_distance > 0 and marker_distance <= 40.0:
-                print("   ✅ Distance OK - Scanning for markers...")
-                marker_handler.reset_detection()
-                detected = marker_handler.wait_for_markers(timeout=1.0)
+            for offset in sweep_offsets:
+                sweep_angle = angle + offset
+                print(f"   🔄 Rotating to {sweep_angle}° (offset {offset:+}°) and tilting...")
+                gimbal.moveto(pitch=-20, yaw=sweep_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+                time.sleep(0.3)
                 
-                if detected and marker_handler.markers:
-                    marker_ids = [m.id for m in marker_handler.markers]
-                    print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                # วัดระยะทางใหม่สำหรับมุมนี้
+                tof_handler.start_scanning('marker_scan')
+                sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+                time.sleep(0.15)
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
+                marker_distance = tof_handler.get_average_distance('marker_scan')
+                print(f"   📐 Marker scan distance (tilted) at {sweep_angle}°: {marker_distance:.2f}cm")
+                
+                if offset == 0:
+                    center_distance = marker_distance
+                
+                ids_at_angle = []
+                if marker_distance > 0 and marker_distance <= 40.0:
+                    print("   ✅ Distance OK - Scanning for markers...")
+                    marker_handler.reset_detection()
+                    detected = marker_handler.wait_for_markers(timeout=1.0)
+                    
+                    if detected and marker_handler.markers:
+                        ids_at_angle = [m.id for m in marker_handler.markers]
+                        for mid in ids_at_angle:
+                            all_marker_ids.add(mid)
+                        print(f"   🎯 FOUND MARKERS at {sweep_angle}°: {ids_at_angle}")
+                        if nearest_marker_distance is None or (marker_distance > 0 and marker_distance < nearest_marker_distance):
+                            nearest_marker_distance = marker_distance
+                    else:
+                        print(f"   ❌ No markers found at {sweep_angle}°")
                 else:
-                    print(f"   ❌ No markers found")
-            else:
-                print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+                    print(f"   ❌ Distance not suitable for marker detection at {sweep_angle}°: {marker_distance:.2f}cm")
+                
+                angle_details.append({
+                    'angle': sweep_angle,
+                    'offset': offset,
+                    'marker_ids': ids_at_angle,
+                    'distance': marker_distance,
+                    'compass_direction': get_compass_direction(sweep_angle)
+                })
             
-            # เก็บผลลัพธ์
+            # สรุปผลรวมสำหรับด้านนี้
+            aggregated_ids = sorted(list(all_marker_ids))
+            stored_distance = nearest_marker_distance if nearest_marker_distance is not None else (center_distance if center_distance is not None else 0.0)
+            
             current_node.markerScanResults[direction_name] = {
-                'marker_ids': marker_ids,
-                'distance': marker_distance,
+                'marker_ids': aggregated_ids,
+                'distance': stored_distance,
                 'direction_name': direction_name,
                 'angle': angle,
+                'sweep_offsets': sweep_offsets,
+                'angle_details': angle_details,
                 'compass_direction': get_compass_direction(angle),
                 'timestamp': datetime.now().isoformat(),
                 'found_red': True
             }
             
-            if marker_ids:
-                current_node.markersFound[direction_name] = marker_ids
+            if aggregated_ids:
+                current_node.markersFound[direction_name] = aggregated_ids
                 current_node.hasMarkers = True
-                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
+                print(f"   ✅ Stored markers for {direction_name}: {aggregated_ids}")
     
     elif marker_handler:
         print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
